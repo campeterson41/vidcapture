@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; media-src 'self' capture-media:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: capture-media:; font-src 'self'; media-src 'self' capture-media:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <title>VidCapture</title>
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="style.css">
@@ -19,19 +19,31 @@
     <symbol id="i-stop" viewBox="0 0 24 24"><path d="M5 7a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v10a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2z"/></symbol>
     <symbol id="i-folder" viewBox="0 0 24 24"><path d="M5 4h4l3 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-11a2 2 0 0 1 2 -2"/></symbol>
     <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8.1 8.1 0 0 0 -15.5 -2m-.5 -4v4h4"/><path d="M4 13a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4"/></symbol>
+    <symbol id="i-link" viewBox="0 0 24 24"><path d="M9 15l6 -6"/><path d="M11 6l.463 -.536a5 5 0 0 1 7.071 7.072l-.534 .464"/><path d="M13 18l-.397 .534a5.068 5.068 0 0 1 -7.127 0a4.972 4.972 0 0 1 0 -7.071l.524 -.463"/></symbol>
+    <symbol id="i-video" viewBox="0 0 24 24"><path d="M15 10l4.553 -2.276a1 1 0 0 1 1.447 .894v6.764a1 1 0 0 1 -1.447 .894l-4.553 -2.276v-4z"/><path d="M3 8a2 2 0 0 1 2 -2h8a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-8a2 2 0 0 1 -2 -2l0 -8"/></symbol>
     <symbol id="i-eye" viewBox="0 0 24 24"><path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0"/><path d="M21 12c-2.4 4 -5.4 6 -9 6c-3.6 0 -6.6 -2 -9 -6c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6"/></symbol>
     <symbol id="i-chevron" viewBox="0 0 24 24"><path d="M6 9l6 6l6 -6"/></symbol>
     <symbol id="i-alert" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0"/><path d="M12 8v4"/><path d="M12 16h.01"/></symbol>
     <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></symbol>
     <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6l-12 12"/><path d="M6 6l12 12"/></symbol>
     <symbol id="i-cut" viewBox="0 0 24 24"><path d="M4 17a3 3 0 1 0 6 0a3 3 0 1 0 -6 0"/><path d="M14 17a3 3 0 1 0 6 0a3 3 0 1 0 -6 0"/><path d="M9.15 14.85l8.85 -10.85"/><path d="M6 4l8.85 10.85"/></symbol>
+    <symbol id="i-window" viewBox="0 0 24 24"><path d="M3 6a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2z"/><path d="M3 9h18"/></symbol>
     <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14l-4 -4l4 -4"/><path d="M5 10h11a4 4 0 1 1 0 8h-1"/></symbol>
+    <symbol id="i-camera" viewBox="0 0 24 24"><path d="M5 7h1a2 2 0 0 0 2 -2a1 1 0 0 1 1 -1h6a1 1 0 0 1 1 1a2 2 0 0 0 2 2h1a2 2 0 0 1 2 2v9a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-9a2 2 0 0 1 2 -2"/><path d="M9 13a3 3 0 1 0 6 0a3 3 0 0 0 -6 0"/></symbol>
+    <symbol id="i-camera-off" viewBox="0 0 24 24"><path d="M8.297 4.289a.997 .997 0 0 1 .703 -.289h6a1 1 0 0 1 1 1a2 2 0 0 0 2 2h1a2 2 0 0 1 2 2v8m-1.187 2.828c-.249 .11 -.524 .172 -.813 .172h-14a2 2 0 0 1 -2 -2v-9a2 2 0 0 1 2 -2h1c.298 0 .58 -.065 .834 -.181"/><path d="M10.422 10.448a3 3 0 1 0 4.15 4.098"/><path d="M3 3l18 18"/></symbol>
+    <symbol id="i-mic-off" viewBox="0 0 24 24"><path d="M3 3l18 18"/><path d="M9 5a3 3 0 0 1 6 0v5a3 3 0 0 1 -.13 .874m-2 2a3 3 0 0 1 -3.87 -2.872v-1"/><path d="M5 10a7 7 0 0 0 10.846 5.85m2 -2a6.967 6.967 0 0 0 1.152 -3.85"/><path d="M8 21h8"/><path d="M12 17v4"/></symbol>
+    <symbol id="i-mic" viewBox="0 0 24 24"><path d="M9 5a3 3 0 0 1 3 -3a3 3 0 0 1 3 3v5a3 3 0 0 1 -3 3a3 3 0 0 1 -3 -3z"/><path d="M5 10a7 7 0 0 0 14 0"/><path d="M8 21h8"/><path d="M12 17v4"/></symbol>
+    <symbol id="i-volume" viewBox="0 0 24 24"><path d="M15 8a5 5 0 0 1 0 8"/><path d="M17.7 5a9 9 0 0 1 0 14"/><path d="M6 15h-2a1 1 0 0 1 -1 -1v-4a1 1 0 0 1 1 -1h2l3.5 -4.5a.8 .8 0 0 1 1.5 .5v14a.8 .8 0 0 1 -1.5 .5l-3.5 -4.5"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M12 6a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M4 6h8"/><path d="M16 6h4"/><path d="M6 12a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M4 12h2"/><path d="M10 12h10"/><path d="M15 18a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M4 18h11"/><path d="M19 18h1"/></symbol>
+    <symbol id="i-pointer" viewBox="0 0 24 24"><path d="M7.904 17.563a1.2 1.2 0 0 0 2.228 .308l2.09 -3.093l4.907 4.907a1.067 1.067 0 0 0 1.509 0l1.047 -1.047a1.067 1.067 0 0 0 0 -1.509l-4.907 -4.907l3.113 -2.09a1.2 1.2 0 0 0 -.309 -2.228l-13.582 -3.904l3.904 13.563z"/></symbol>
   </svg>
 
   <header class="titlebar">
     <span class="wordmark"><img src="icon.svg" alt="" width="16" height="16">VidCapture</span>
     <div class="view-switch" role="group" aria-label="View">
       <button type="button" id="view-record" aria-pressed="true">Record</button>
+      <button type="button" id="view-library" aria-pressed="false">Library</button>
       <button type="button" id="view-edit" aria-pressed="false">Edit</button>
     </div>
     <div class="window-controls">
@@ -46,12 +58,6 @@
     <button type="button" class="text-btn" id="alert-dismiss">Dismiss</button>
   </div>
 
-  <dialog id="window-picker" aria-labelledby="window-picker-title">
-    <div class="panel-head"><h2 id="window-picker-title">Choose a window</h2><div class="actions"><button type="button" class="btn btn-quiet" id="window-picker-screen">Pick on screen</button><button type="button" class="btn btn-quiet" id="window-picker-close">Cancel</button></div></div>
-    <p class="note">Its title appears in Capture, and a green outline marks your selection.</p>
-    <div id="window-list"></div>
-  </dialog>
-
   <dialog id="share-dialog" aria-labelledby="share-title">
     <form id="share-form">
       <h2 id="share-title">Share on VidCapture</h2>
@@ -62,49 +68,37 @@
   </dialog>
   <main class="content" id="content">
     <section class="panel source" aria-labelledby="source-heading">
-      <div class="panel-head">
-        <h2 id="source-heading">Source</h2>
-        <button type="button" class="btn btn-quiet" id="open-bar" title="Pick a window, area, or display on screen"><svg class="icon" aria-hidden="true"><use href="#i-marquee"/></svg><span>Pick on screen</span></button>
+      <h2 id="source-heading" class="visually-hidden">What to record</h2>
+      <div class="source-tabs" role="tablist" aria-labelledby="source-heading">
+        <button type="button" role="tab" id="tab-screen" data-tab="screen" aria-selected="true" aria-controls="targets"><svg class="icon" aria-hidden="true"><use href="#i-desktop"/></svg><span>Full screen</span></button>
+        <button type="button" role="tab" id="tab-window" data-tab="window" aria-selected="false" aria-controls="targets" tabindex="-1"><svg class="icon" aria-hidden="true"><use href="#i-window"/></svg><span>Window</span></button>
+        <button type="button" role="tab" id="tab-area" data-tab="area" aria-selected="false" aria-controls="targets" tabindex="-1"><svg class="icon" aria-hidden="true"><use href="#i-marquee"/></svg><span>Area</span></button>
       </div>
-      <div class="targets" id="targets" role="group" aria-labelledby="source-heading"></div>
-      <p class="note" id="region-note" hidden>Window and area recordings capture a fixed part of the screen. Keep the window in place while recording.</p>
+      <div class="source-tools" id="source-tools" hidden>
+        <button type="button" class="btn btn-plain" id="pick-on-screen"><svg class="icon" aria-hidden="true"><use href="#i-pointer"/></svg><span>Click a window on screen</span></button>
+      </div>
+      <div class="targets" id="targets" role="tabpanel" aria-labelledby="tab-screen"></div>
+      <p class="note" id="region-note" hidden></p>
     </section>
 
     <section class="panel inputs" aria-labelledby="inputs-heading">
       <div class="panel-head">
-        <h2 id="inputs-heading">Audio and camera</h2>
-        <button type="button" class="btn btn-quiet" id="refresh" aria-label="Refresh microphones and cameras" title="Refresh microphones and cameras"><svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg><span>Refresh devices</span></button>
+        <h2 id="inputs-heading">Camera and sound</h2>
+        <button type="button" class="icon-btn" id="refresh" aria-label="Refresh microphones and cameras" title="Refresh microphones and cameras"><svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg></button>
       </div>
 
-      <div class="field">
-        <label for="microphone">Microphone</label>
-        <div class="select-wrap">
-          <select id="microphone" data-setting="microphone"></select>
-          <svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg>
-        </div>
-      </div>
-
-      <div class="field field-inline">
-        <span id="system-audio-label">System audio</span>
-        <button type="button" class="switch" id="system-audio" role="switch" aria-checked="false" aria-labelledby="system-audio-label"><span class="switch-thumb"></span></button>
-      </div>
-
-      <div class="field">
-        <label for="camera">Camera</label>
-        <div class="camera-row">
+      <div class="devices">
+        <div class="device">
           <div class="select-wrap">
-            <select id="camera" data-setting="camera"></select>
-            <svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg>
+            <svg class="icon lead" id="camera-icon" aria-hidden="true"><use href="#i-camera"/></svg>
+            <select id="camera" data-setting="camera" aria-label="Camera"></select>
+            <svg class="icon chev" aria-hidden="true"><use href="#i-chevron"/></svg>
           </div>
-          <button type="button" class="btn btn-quiet" id="preview" aria-pressed="false"><svg class="icon" aria-hidden="true"><use href="#i-eye"/></svg><span>Preview</span></button>
+          <button type="button" class="icon-btn preview-btn" id="preview" aria-pressed="false" aria-label="Show camera" title="Show camera"><svg class="icon" aria-hidden="true"><use href="#i-eye"/></svg></button>
         </div>
-      </div>
-
-      <details class="more" id="more">
-        <summary><span>More settings</span><svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></summary>
-        <div class="more-body" id="more-body">
-          <fieldset class="segmented" data-setting="cameraSize" title="Scales with the selected window. Changes appear immediately in Preview.">
-            <legend>Camera size</legend>
+        <div class="camera-options" id="camera-options" hidden>
+          <fieldset class="segmented" data-setting="cameraSize">
+            <legend>Size</legend>
             <div class="seg">
               <label><input type="radio" name="cameraSize" value="small"><span>Small</span></label>
               <label><input type="radio" name="cameraSize" value="medium"><span>Medium</span></label>
@@ -112,12 +106,68 @@
             </div>
           </fieldset>
           <fieldset class="segmented" data-setting="cameraCorner">
-            <legend>Camera corner</legend>
+            <legend>Corner</legend>
             <div class="seg">
               <label><input type="radio" name="cameraCorner" value="bottom-left"><span>Bottom left</span></label>
               <label><input type="radio" name="cameraCorner" value="bottom-right"><span>Bottom right</span></label>
             </div>
           </fieldset>
+        </div>
+        <div class="device">
+          <div class="select-wrap">
+            <svg class="icon lead" id="mic-icon" aria-hidden="true"><use href="#i-mic"/></svg>
+            <select id="microphone" data-setting="microphone" aria-label="Microphone"></select>
+            <span class="level" id="mic-level" hidden><span></span></span>
+            <svg class="icon chev" aria-hidden="true"><use href="#i-chevron"/></svg>
+          </div>
+        </div>
+        <div class="device toggle-row">
+          <svg class="icon lead" aria-hidden="true"><use href="#i-volume"/></svg>
+          <span id="system-audio-label">System audio</span>
+          <button type="button" class="switch" id="system-audio" role="switch" aria-checked="false" aria-labelledby="system-audio-label"><span class="switch-thumb"></span></button>
+        </div>
+      </div>
+
+      <details class="more" id="more" open>
+        <summary><svg class="icon" aria-hidden="true"><use href="#i-sliders"/></svg><span>Studio settings</span><svg class="icon chev" aria-hidden="true"><use href="#i-chevron"/></svg></summary>
+        <div class="more-body" id="more-body">
+          <h3 class="group-title" id="mic-group">Microphone</h3>
+          <div class="control-row" id="mic-gain-row" hidden>
+            <label for="mic-gain">Mic level</label>
+            <div class="range-wrap"><input type="range" id="mic-gain" min="0" max="150" step="1"><output id="mic-gain-value" for="mic-gain"></output></div>
+          </div>
+          <fieldset class="segmented" data-setting="micNoise">
+            <legend>Noise removal</legend>
+            <div class="seg">
+              <label><input type="radio" name="micNoise" value="off"><span>Off</span></label>
+              <label><input type="radio" name="micNoise" value="on"><span>On</span></label>
+            </div>
+          </fieldset>
+          <fieldset class="segmented" data-setting="micGate">
+            <legend>Voice gate</legend>
+            <div class="seg">
+              <label><input type="radio" name="micGate" value="off"><span>Off</span></label>
+              <label><input type="radio" name="micGate" value="gentle"><span>Gentle</span></label>
+              <label><input type="radio" name="micGate" value="strong"><span>Strong</span></label>
+            </div>
+          </fieldset>
+          <fieldset class="segmented" data-setting="micRumble">
+            <legend>Rumble filter</legend>
+            <div class="seg">
+              <label><input type="radio" name="micRumble" value="false"><span>Off</span></label>
+              <label><input type="radio" name="micRumble" value="true"><span>On</span></label>
+            </div>
+          </fieldset>
+          <fieldset class="segmented" data-setting="micBackup">
+            <legend>Backup track</legend>
+            <div class="seg">
+              <label><input type="radio" name="micBackup" value="true"><span>On</span></label>
+              <label><input type="radio" name="micBackup" value="false"><span>Off</span></label>
+            </div>
+          </fieldset>
+          <p class="note alert-note" id="mic-cleanup-error" hidden></p>
+
+          <h3 class="group-title" id="camera-group">Camera</h3>
           <fieldset class="segmented" data-setting="cameraCorrection" id="camera-correction" hidden>
             <legend>Lens correction</legend>
             <div class="seg">
@@ -125,7 +175,7 @@
               <label><input type="radio" name="cameraCorrection" value="off"><span>Off</span></label>
             </div>
           </fieldset>
-          <p class="note" id="camera-profile-note" hidden>Razer 4K at 30 fps uses computer-side correction with camera HDR off.</p>
+          <p class="note" id="camera-profile-note" hidden></p>
           <fieldset class="segmented" data-setting="cameraLighting">
             <legend>Camera lighting</legend>
             <div class="seg">
@@ -133,7 +183,32 @@
               <label><input type="radio" name="cameraLighting" value="balanced"><span>Balanced</span></label>
             </div>
           </fieldset>
-          <p class="note">Balanced gently lifts shadows and softens highlights. It does not add HDR detail.</p>
+          <fieldset class="segmented" data-setting="cameraBackground" id="camera-background">
+            <legend>Background</legend>
+            <div class="seg">
+              <label><input type="radio" name="cameraBackground" value="off"><span>Original</span></label>
+              <label><input type="radio" name="cameraBackground" value="blur"><span>Blur</span></label>
+              <label><input type="radio" name="cameraBackground" value="image"><span>Image</span></label>
+            </div>
+          </fieldset>
+          <fieldset class="segmented" data-setting="cameraBlur" id="camera-blur" hidden>
+            <legend>Blur strength</legend>
+            <div class="seg">
+              <label><input type="radio" name="cameraBlur" value="light"><span>Light</span></label>
+              <label><input type="radio" name="cameraBlur" value="medium"><span>Medium</span></label>
+              <label><input type="radio" name="cameraBlur" value="strong"><span>Strong</span></label>
+            </div>
+          </fieldset>
+          <div class="backgrounds" id="backgrounds" hidden>
+            <div class="background-list" id="background-list" role="radiogroup" aria-label="Background image"></div>
+            <button type="button" class="btn btn-plain" id="background-add"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg><span>Add image</span></button>
+          </div>
+          <p class="note" id="effects-note" hidden>Background effects are not installed. Run scripts/setup-camera-effects.sh (needs an NVIDIA GPU).</p>
+          <div class="camera-controls" id="camera-controls" aria-live="polite"></div>
+          <p class="note" id="camera-controls-note" hidden></p>
+          <div class="control-actions" id="camera-reset-row" hidden><button type="button" class="btn btn-plain" id="camera-reset">Reset camera to its defaults</button></div>
+
+          <h3 class="group-title">Screen</h3>
           <fieldset class="segmented" data-setting="fps">
             <legend>Screen frame rate</legend>
             <div class="seg">
@@ -159,19 +234,70 @@
         </div>
       </details>
     </section>
-
-    <section class="panel recordings" aria-labelledby="recordings-heading">
-      <div class="panel-head">
-        <h2 id="recordings-heading">Recordings</h2>
-        <button type="button" class="btn btn-quiet folder-btn" id="open-folder" title="Open folder">
-          <svg class="icon" aria-hidden="true"><use href="#i-folder"/></svg>
-          <span class="path" id="output-dir"></span>
-        </button>
-      </div>
-      <ul class="recent" id="recent"></ul>
-      <p class="empty" id="recent-empty" hidden>No recordings yet.</p>
-    </section>
   </main>
+
+  <section class="library" id="library" aria-labelledby="library-heading">
+    <div class="library-head">
+      <h2 id="library-heading">Your recordings</h2>
+      <span class="library-count" id="library-count"></span>
+      <button type="button" class="btn btn-plain" id="video-library" title="Your videos on vidcapture.stream">Online library</button>
+      <button type="button" class="btn btn-plain" id="library-folder"><svg class="icon" aria-hidden="true"><use href="#i-folder"/></svg><span>Show in folder</span></button>
+    </div>
+    <div class="library-watch" id="library-preview" hidden>
+      <div class="watch-top">
+        <button type="button" class="btn btn-plain watch-back" id="library-close"><svg class="icon icon-back" aria-hidden="true"><use href="#i-chevron"/></svg><span>All recordings</span></button>
+      </div>
+      <section class="vp" id="library-player" aria-label="Video player" tabindex="0">
+        <div class="vp-stage">
+          <video class="vp-video" id="library-video" preload="metadata" playsinline disablepictureinpicture></video>
+          <button type="button" class="vp-center" aria-label="Play video" hidden><svg class="vp-icon vp-i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 11 7-11 7z" fill="currentColor" stroke="none"/></svg><svg class="vp-icon vp-i-replay" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9a8 8 0 1 1-1 7M4 4v5h5"/></svg></button>
+          <div class="vp-loading" role="status" hidden><span class="vp-spinner"></span></div>
+          <div class="vp-error" role="alert" hidden><p>This recording could not be played here.</p><button type="button" class="btn btn-quiet vp-retry">Try again</button></div>
+        </div>
+        <div class="vp-controls">
+          <div class="vp-seek-wrap"><span class="vp-track"><span class="vp-buffer"></span><span class="vp-progress"></span></span><input class="vp-seek" type="range" min="0" max="100" step="0.01" value="0" aria-label="Seek video" aria-valuetext="0:00"><output class="vp-seek-preview" hidden></output></div>
+          <div class="vp-toolbar">
+            <div class="vp-group">
+              <button type="button" class="vp-button vp-toggle" aria-label="Play (Space)" title="Play (Space)"><svg class="vp-icon vp-i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 11 7-11 7z" fill="currentColor" stroke="none"/></svg><svg class="vp-icon vp-i-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14M16 5v14" stroke-width="4"/></svg><svg class="vp-icon vp-i-replay" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9a8 8 0 1 1-1 7M4 4v5h5"/></svg></button>
+              <button type="button" class="vp-button vp-back" aria-label="Back 10 seconds (J)" title="Back 10 seconds (J)"><svg class="vp-icon vp-i-back" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9a8 8 0 1 1-1 7M4 4v5h5"/><text x="12" y="16" text-anchor="middle" stroke="none" fill="currentColor" font-size="9" font-family="sans-serif">10</text></svg></button><button type="button" class="vp-button vp-forward" aria-label="Forward 10 seconds (L)" title="Forward 10 seconds (L)"><svg class="vp-icon vp-i-forward" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 9a8 8 0 1 0 1 7M20 4v5h-5"/><text x="12" y="16" text-anchor="middle" stroke="none" fill="currentColor" font-size="9" font-family="sans-serif">10</text></svg></button>
+              <span class="vp-time mono"><span class="vp-current">0:00</span><span class="vp-divider"> / </span><span class="vp-duration">0:00</span></span>
+            </div>
+            <div class="vp-group">
+              <div class="vp-volume-wrap"><button type="button" class="vp-button vp-mute" aria-label="Mute (M)" title="Mute (M)"><svg class="vp-icon vp-i-volume" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 4 5 9H2v6h3l6 5zM15 8a6 6 0 0 1 0 8M18 5a10 10 0 0 1 0 14"/></svg><svg class="vp-icon vp-i-muted" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 4 5 9H2v6h3l6 5zM16 9l6 6M22 9l-6 6"/></svg></button><input class="vp-volume" type="range" min="0" max="1" step="0.05" value="1" aria-label="Volume"></div>
+              <select class="vp-speed" aria-label="Playback speed" title="Playback speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="1.75">1.75×</option><option value="2">2×</option><option value="3">3×</option></select>
+              <button type="button" class="vp-button vp-pip" aria-label="Picture in picture" title="Picture in picture"><svg class="vp-icon vp-i-pip" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M12 11h7v6h-7z" fill="currentColor" stroke="none"/></svg></button><button type="button" class="vp-button vp-fullscreen" aria-label="Fullscreen (F)" title="Fullscreen (F)"><svg class="vp-icon vp-i-fullscreen" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M21 16v5h-5M3 16v5h5"/></svg><svg class="vp-icon vp-i-exit" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8h5V3M21 8h-5V3M16 21v-5h5M8 21v-5H3"/></svg></button>
+            </div>
+          </div>
+        </div>
+      </section>
+      <div class="library-detail">
+        <div class="library-detail-text">
+          <h3 id="library-title"></h3>
+          <div class="meta-row">
+            <p class="library-meta" id="library-meta"></p>
+            <button type="button" class="versions-toggle" id="versions-toggle" aria-expanded="false" aria-controls="library-versions" hidden><span id="versions-count"></span><svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></button>
+          </div>
+        </div>
+        <div class="library-actions">
+          <button type="button" class="btn btn-quiet" id="library-edit"><svg class="icon" aria-hidden="true"><use href="#i-cut"/></svg><span>Edit</span></button>
+          <button type="button" class="btn btn-solid" id="library-copy-link" hidden><svg class="icon" aria-hidden="true"><use href="#i-link"/></svg><span>Copy link</span></button>
+          <button type="button" class="btn btn-quiet" id="library-open-link" hidden>Open link</button>
+          <button type="button" class="btn btn-solid" id="library-share"><svg class="icon" aria-hidden="true"><use href="#i-link"/></svg><span>Create shareable link</span></button>
+        </div>
+        <p class="library-share-note" id="library-share-note" hidden>Sharing opens vidcapture.stream so you can log in or create a free account.</p>
+        <p class="library-share-note" id="library-link-note" hidden>Edited since this link was made.</p>
+      </div>
+      <section class="versions" id="library-versions" aria-label="Versions" hidden>
+        <ol class="version-list" id="version-list"></ol>
+      </section>
+    </div>
+    <ul class="library-grid" id="library-grid" aria-label="Recordings"></ul>
+    <div class="library-empty" id="library-empty" hidden>
+      <p>No recordings yet.</p>
+      <button type="button" class="btn btn-quiet" id="library-record">Record something</button>
+    </div>
+    <p class="library-empty" id="library-loading" hidden>Loading recordings</p>
+  </section>
 
   <section class="editor" id="editor" aria-label="Edit recording">
     <p class="editor-empty" id="editor-empty">Choose Edit on a recording to open it here.</p>
@@ -223,12 +349,24 @@
           <button type="button" class="btn btn-plain" id="reset">Reset edits</button>
         </div>
       </div>
+      <section class="transcript" id="transcript" aria-labelledby="transcript-heading">
+        <div class="transcript-head">
+          <h3 id="transcript-heading">Transcript</h3>
+          <span class="transcript-status" id="transcript-status" role="status" aria-live="polite"></span>
+          <div class="transcript-actions">
+            <button type="button" class="btn btn-quiet" id="transcript-delete" title="Cut the selected words from the video (Delete)" hidden>Delete words</button>
+            <button type="button" class="btn btn-quiet" id="transcript-ums" title="Cut um, uh and similar filler sounds" hidden>Remove filler words</button>
+            <button type="button" class="btn btn-quiet" id="transcript-cancel" hidden>Cancel</button>
+            <button type="button" class="btn btn-solid" id="transcript-make" hidden>Make transcript</button>
+          </div>
+        </div>
+        <div class="transcript-text" id="transcript-text" tabindex="0" aria-label="Transcript words. Select words and press Delete to cut them."></div>
+      </section>
     </div>
   </section>
 
   <div class="sharebar">
-    <span class="note">vidcapture.stream</span>
-    <div class="actions"><button type="button" class="btn btn-quiet" id="video-library">Video library</button><button type="button" class="btn btn-quiet" id="share-video">Share video</button><button type="button" class="btn btn-solid" id="copy-card" hidden>Copy video card</button><button type="button" class="btn btn-quiet" id="copy-share" hidden>Copy link</button></div>
+    <div class="actions"><button type="button" class="btn btn-quiet" id="share-video">Share video</button><button type="button" class="btn btn-solid" id="copy-share" hidden>Copy link</button></div>
   </div>
   <div class="jobbar" id="jobbar" hidden>
     <span class="job-mark" aria-hidden="true"><span class="spinner"></span><svg class="icon i-done"><use href="#i-check"/></svg><svg class="icon i-fail"><use href="#i-alert"/></svg></span>
@@ -252,7 +390,7 @@
     <div class="actions">
       <select id="enhance-mode" aria-label="Audio enhancement method"><option value="quick">Quick studio</option><option value="quick-quiet" selected>Quick studio, less noise</option><option value="folio">Folio studio</option></select>
       <button type="button" class="btn btn-quiet" id="enhance">Enhance audio</button>
-      <button type="button" class="btn btn-solid" id="export"><span class="spinner" aria-hidden="true"></span><span>Save edited copy</span></button>
+      <button type="button" class="btn btn-solid" id="export"><span class="spinner" aria-hidden="true"></span><span>Save version</span></button>
     </div>
   </footer>
 
@@ -263,6 +401,14 @@
         <span class="dot" aria-hidden="true"></span>
         <span class="status" id="status" aria-live="polite"></span>
       </div>
+      <div class="location" id="location">
+        <button type="button" class="folder-btn" id="open-folder" title="Open folder">
+          <svg class="icon" aria-hidden="true"><use href="#i-folder"/></svg>
+          <span class="loc-label">Saves to</span>
+          <span class="path" id="output-dir"></span>
+        </button>
+        <button type="button" class="text-link" id="change-folder">Change</button>
+      </div>
     </div>
     <div class="actions">
       <button type="button" class="btn btn-quiet" id="edit-last" hidden><svg class="icon" aria-hidden="true"><use href="#i-cut"/></svg><span class="label">Edit</span></button>
@@ -272,6 +418,7 @@
     </div>
   </footer>
 
+  <script src="player.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

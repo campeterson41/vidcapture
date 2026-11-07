@@ -1,0 +1,10 @@
+{
+  "name": "Example camera",
+  "match": "usb:0000:0000",
+  "note": "Shown under this camera's settings.",
+  "lensCorrection": {
+    "radial": [1.0, 0.0, 0.0],
+    "offset": [0.0, 0.0],
+    "fittedAt": { "zoom_absolute": 100 }
+  }
+}

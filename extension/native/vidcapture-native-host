@@ -1,0 +1,17 @@
+#!/usr/bin/env node
+'use strict';
+// Chrome native messaging host for the VidCapture extension. Its only job is to
+// open the local desktop app. It never reads or sends recordings.
+const {spawn}=require('node:child_process'),os=require('node:os'),fs=require('node:fs');
+const launcher=process.env.VIDCAPTURE_LAUNCHER||os.homedir()+'/.local/bin/capture';
+let buffer=Buffer.alloc(0);
+function reply(message){const body=Buffer.from(JSON.stringify(message)),head=Buffer.alloc(4);head.writeUInt32LE(body.length);process.stdout.write(Buffer.concat([head,body]),()=>process.exit(0));}
+process.stdin.on('data',chunk=>{
+ buffer=Buffer.concat([buffer,chunk]);if(buffer.length<4)return;const size=buffer.readUInt32LE(0);if(size>4096)return reply({ok:false,error:'Message too large.'});if(buffer.length<4+size)return;
+ let message;try{message=JSON.parse(buffer.subarray(4,4+size).toString());}catch{return reply({ok:false,error:'Invalid message.'});}
+ if(message?.action!=='record')return reply({ok:false,error:'Unknown action.'});
+ if(!fs.existsSync(launcher))return reply({ok:false,error:'VidCapture is not installed on this computer. Install the desktop app to record.'});
+ // The app keeps a single instance, so this opens it or brings the open window forward.
+ const child=spawn(launcher,[],{detached:true,stdio:'ignore'});child.on('error',()=>reply({ok:false,error:'VidCapture could not start.'}));child.unref();setTimeout(()=>reply({ok:true}),150);
+});
+process.stdin.on('end',()=>{if(buffer.length<4)process.exit(0);});

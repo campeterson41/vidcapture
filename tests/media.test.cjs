@@ -85,8 +85,12 @@ test('fast cleanup preserves video packets, timing, original and system audio; c
     assert.equal(rec.state.job.stage,'Canceled');assert.equal(await hash(file),before);
     assert.equal((await fs.readdir(rec.outputDir)).filter(n=>n.includes('.saving.')).length,0);
     assert.ok((await fs.readdir(rec.dataDir)).some(n=>n.startsWith('audio-job-')));
+    // Cuts no longer have to be saved first: the enhanced copy carries the plan.
     await media.saveEdits(file,[[1,5]]);media.enhanceAudioFast(file);await media.task;
-    assert.match(rec.state.job.error,/Save an edited copy/);
+    assert.equal(rec.state.job.error,null);
+    const enhanced=rec.state.job.output;assert.ok(enhanced&&enhanced!==file);
+    assert.deepEqual((await media.metadata(enhanced)).keep,[[1,5]]);
+    assert.equal((await media.getMedia(enhanced)).canEnhance,false,'an enhanced copy is not enhanced twice');
     await fs.writeFile(media.metadataPath(file),JSON.stringify({micTrack:0,systemTrack:99}));
     media.enhanceAudioFast(file);await media.task;assert.match(rec.state.job.error,/system audio track/);
     await fs.writeFile(media.metadataPath(file),JSON.stringify({micTrack:-1}));

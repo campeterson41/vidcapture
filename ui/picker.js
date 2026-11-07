@@ -8,7 +8,7 @@
   const cut = $('cut'), sizeTag = $('size-tag'), top = $('picker-top'), hint = $('hint');
   const confirm = $('confirm'), confirmTitle = $('confirm-title'), confirmSize = $('confirm-size');
   const go = $('go'), goLabel = $('go-label');
-  const HINTS = { window: 'Click a window', area: 'Drag to select an area', display: 'Click a display' };
+  const HINTS = { window: 'Click a window', area: 'Drag to select an area', display: 'Click a screen' };
 
   let data = null, mode = 'window', selection = null, drag = null, hover = null;
 
@@ -76,7 +76,7 @@
     const r = selection.rect;
     const home = G.monitorAt([data.monitor], r.x + r.width / 2, r.y + r.height / 2);
     if (!home) { confirm.hidden = true; return; }
-    confirmTitle.textContent = selection.kind === 'window' ? selection.title : selection.kind === 'monitor' ? (data.monitor.internal ? 'Laptop display' : data.monitor.id) : 'Area';
+    confirmTitle.textContent = selection.kind === 'window' ? selection.title : selection.kind === 'monitor' ? (data.monitor.label || data.monitor.id) : 'Area';
     confirmSize.textContent = dims(r);
     placeConfirm(r);
     go.focus({ preventScroll: true, focusVisible: false });
@@ -94,6 +94,7 @@
     if (hover && mode === 'window') showSize(hover); else sizeTag.hidden = true;
   }
 
+  let hintTimer = 0;
   const onChrome = (e) => e.target.closest('.confirm, .toolbar, .hint');
 
   document.addEventListener('mousemove', (e) => {
@@ -128,7 +129,16 @@
     if (!drag) return;
     const start = drag; drag = null;
     const rect = G.dragRect(start, globalPoint(e), data.monitor);
-    if (!rect) { showCut(null); vc.select(null); return; }
+    if (!rect) {
+      showCut(null); vc.select(null);
+      // A real drag that came out too small gets a short explanation.
+      const end = globalPoint(e);
+      if (Math.abs(end.x - start.x) > 4 || Math.abs(end.y - start.y) > 4) {
+        hint.textContent = 'Drag a larger area'; hint.hidden = false;
+        clearTimeout(hintTimer); hintTimer = setTimeout(() => { if (mode === 'area') hint.textContent = HINTS[mode]; }, 1800);
+      }
+      return;
+    }
     vc.select({ kind: 'region', rect });
   });
 

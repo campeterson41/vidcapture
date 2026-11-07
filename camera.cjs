@@ -20,9 +20,14 @@ function cameraMode(formats) {
   const mode=candidates[0]||{width:640,height:480,fps:30,format:null};
   return {...mode,input:({MJPG:'mjpeg',YUYV:'yuyv422',NV12:'nv12'})[mode.format]||null,circle:mode.height};
 }
-function cameraShader({correct=false,lighting='original'}={}) {
-  // Matched to this Kiyo Pro Ultra at zoom 100 using static landmarks in paired
-  // 4K frames. Coordinates use half image height. The input is the center square.
+// Shader-safe number literal.
+const glsl=v=>{const n=Number(v);if(!Number.isFinite(n))throw new Error('Invalid lens correction value.');const t=String(n);return /[.e]/.test(t)?t:t+'.0';};
+function cameraShader({correction=null,lighting='original'}={}) {
+  // correction comes from a camera profile: radial and offset coefficients in
+  // half-image-height units. The input is the center square.
+  const correct=!!correction;
+  const [k0,k1,k2]=correct?correction.radial.map(glsl):[];
+  const [ox,oy]=correct?correction.offset.map(glsl):[];
   return `//!HOOK MAIN
 //!BIND HOOKED
 //!DESC Capture camera processing
@@ -31,7 +36,7 @@ vec4 hook() {
     vec2 p = (HOOKED_pos - vec2(0.5)) * 2.0;
     float r2 = dot(p, p);
     vec2 source = HOOKED_pos;
-    ${correct?'float radial = 0.9367660262 - 0.0215517461 * r2 - 0.0004642029 * r2 * r2;\n    source = (p * radial + vec2(-0.0000503881, -0.0070977281)) * 0.5 + vec2(0.5);':''}
+    ${correct?`float radial = ${k0} + (${k1}) * r2 + (${k2}) * r2 * r2;\n    source = (p * radial + vec2(${ox}, ${oy})) * 0.5 + vec2(0.5);`:''}
     vec4 color = HOOKED_tex(source);
     ${lighting==='balanced'?`float luma = dot(color.rgb, vec3(0.2126, 0.7152, 0.0722));
     float adjusted = luma + 0.8 * luma * (1.0 - luma) * (0.5 - luma);

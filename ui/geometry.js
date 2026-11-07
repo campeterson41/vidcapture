@@ -167,7 +167,19 @@
     return { x: Math.round(monitor.x + (monitor.width - size.width) / 2), y: monitor.y + r.top + margin, width: size.width, height: size.height };
   }
 
-  const api = { logicalMonitor, monitorAt, visibleWindows, windowAt, scaleStep, dragRect, physicalSize, regionId, pillPlacement, expandFromDot, barPlacement, targetMonitor, intersects, contains };
+  // Drop-down from the top bar, like the system menus. With an anchor (the bar
+  // icon's x on that monitor) the panel's right edge sits just past the icon;
+  // without one it hugs the monitor's top-right corner.
+  function panelPlacement(monitor, size, anchorX = null, margin = 8) {
+    const r = monitor.reserved || { top: 0, right: 0, bottom: 0 };
+    const minX = monitor.x + margin, maxX = monitor.x + monitor.width - (r.right || 0) - margin - size.width;
+    const want = anchorX == null ? maxX : Math.round(monitor.x + anchorX + 24 - size.width);
+    const top = monitor.y + (r.top || 0) + 6;
+    const maxHeight = monitor.height - (r.top || 0) - (r.bottom || 0) - 12;
+    return { x: Math.max(minX, Math.min(maxX, want)), y: top, width: size.width, height: Math.min(size.height, maxHeight), monitor: monitor.id };
+  }
+
+  const api = { logicalMonitor, monitorAt, visibleWindows, windowAt, scaleStep, dragRect, physicalSize, regionId, pillPlacement, expandFromDot, barPlacement, panelPlacement, targetMonitor, intersects, contains };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.VidGeometry = api;
 })(typeof self !== 'undefined' ? self : this);

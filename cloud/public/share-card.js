@@ -4,7 +4,7 @@ window.videoCard=video=>{
  if(!match||new URL(video.url).origin!==location.origin||typeof video.title!=='string')throw new Error('No video card is ready.');
  const escape=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const title=escape(video.title),url=escape(video.url),image=`${location.origin}/thumbnail/${match[1]}.gif`;
- return {text:`${video.title}\n${video.url}`,html:`<div><a href="${url}" style="font-family:Arial,sans-serif;font-size:18px;font-weight:600;color:#253e2e;text-decoration:underline">${title}</a><br><br><a href="${url}"><img src="${image}" width="480" height="300" alt="Play ${title}" style="display:block;width:480px;max-width:100%;height:auto;border:0"></a></div>`};
+ return {text:video.url,html:`<div><a href="${url}" style="font-family:Arial,sans-serif;font-size:18px;font-weight:600;color:#253e2e;text-decoration:underline">${title}</a><br><br><a href="${url}"><img src="${image}" width="480" height="300" alt="Play ${title}" style="display:block;width:480px;max-width:100%;height:auto;border:0"></a><a href="${url}" style="font-family:Arial,sans-serif;font-size:13px;color:#73786e">${url}</a></div>`};
 };
 // Promise representations preserve the clipboard gesture while an older video creates its preview.
 window.copyVideoCard=async resolveVideo=>{

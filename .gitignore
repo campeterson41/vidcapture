@@ -1,7 +1,11 @@
-.local/
 node_modules/
-.wrangler/
+*.log
+test-results/
+
+.local/
 __pycache__/
+
+.wrangler/
 *.pyc
 .env*
 .dev.vars*

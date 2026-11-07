@@ -17,7 +17,13 @@ export async function makePreview(source,{signal}={}){
    if(Math.abs(video.currentTime-time)>.0001)await wait('seeked',()=>!video.seeking&&video.readyState>=2,()=>{video.currentTime=time;});
    context.fillStyle='#1a1917';context.fillRect(0,0,640,400);context.drawImage(video,(640-w)/2,(400-h)/2,w,h);
    context.fillStyle='rgba(55,91,67,.94)';context.beginPath();context.arc(320,200,46,0,2*Math.PI);context.fill();context.fillStyle='white';context.beginPath();context.moveTo(310,179);context.lineTo(310,221);context.lineTo(342,200);context.closePath();context.fill();
-   if(i===0)poster=await new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',.88));
+   if(i===0){
+    // Link previews (Slack, LinkedIn) only show a large card for a large image, so the poster is 1280x720.
+    const big=document.createElement('canvas');big.width=1280;big.height=720;const b=big.getContext('2d'),k=Math.min(1280/video.videoWidth,720/video.videoHeight),bw=video.videoWidth*k,bh=video.videoHeight*k;
+    b.fillStyle='#1a1917';b.fillRect(0,0,1280,720);b.drawImage(video,(1280-bw)/2,(720-bh)/2,bw,bh);
+    b.fillStyle='rgba(55,91,67,.94)';b.beginPath();b.arc(640,360,92,0,2*Math.PI);b.fill();b.fillStyle='white';b.beginPath();b.moveTo(620,318);b.lineTo(620,402);b.lineTo(684,360);b.closePath();b.fill();
+    poster=await new Promise(resolve=>big.toBlob(resolve,'image/jpeg',.86));
+   }
    const pixels=context.getImageData(0,0,640,400).data,palette=quantize(pixels,160);encoder.writeFrame(applyPalette(pixels,palette),640,400,{palette,delay:170,repeat:0});
    await new Promise(resolve=>setTimeout(resolve,0));
   }

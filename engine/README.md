@@ -16,7 +16,9 @@ window with another app is visible in the recording.
 
 Run `./engine/build.sh` to reproduce the private binary. The existing Arch build
 libraries and uv are required. Build tools and headers stay under the selected
-build directory. No package or system service is replaced. The build downloads the pinned upstream source, applies the included patch, and builds locally. No compiled upstream binary is distributed in this release.
+build directory. No package or system service is replaced. The build downloads
+the pinned upstream source, applies the included patch, and builds locally. No
+compiled upstream binary is distributed.
 
 Upstream: https://git.dec05eba.com/gpu-screen-recorder/about/
 License: ../licenses/gpu-screen-recorder-GPL-3.0.txt

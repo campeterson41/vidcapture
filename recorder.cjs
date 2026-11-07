@@ -1,17 +1,26 @@
 const {EventEmitter} = require('node:events');
+const {displayName,deviceLabel}=require('./names.cjs');
 const {spawn, execFile} = require('node:child_process');
 const {promisify} = require('node:util');
 const fs = require('node:fs/promises');
-const {watch} = require('node:fs');
+const {watch,constants:fsConstants} = require('node:fs');
+const {versionBase}=require('./library.cjs');
+const {validImageName}=require('./camera-effects.cjs');
 const path = require('node:path');
 const os = require('node:os');
 const net = require('node:net');
 const {cameraMode,cameraShader,cameraCommand}=require('./camera.cjs');
+const {cameraKey}=require('./camera-settings.cjs');
+const {publicProfile}=require('./camera-profiles.cjs');
 const {selectedWindow,windowTarget,matchingWindow,containingMonitor,physicalRegion}=require('./tracking.cjs');
 const run = promisify(execFile);
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const ACTIVE = new Set(['selecting','starting','recording','paused','stopping']);
-const DEFAULTS = {microphone:'default_input',systemAudio:false,camera:'none',cameraSize:'small',cameraCorner:'bottom-right',cameraCorrection:'computer',cameraLighting:'original',fps:30,quality:'high',resolution:'1920x1080'};
+// Any finished video in the recordings folder; partial saves and hidden work
+// folders are skipped.
+function isRecordingName(name){return typeof name==='string'&&!name.startsWith('.')&&/\.(mp4|mkv)$/i.test(name)&&!name.endsWith('.saving.mp4');}
+
+const DEFAULTS = {microphone:'default_input',systemAudio:false,camera:'none',cameraSize:'small',cameraCorner:'bottom-right',cameraCorrection:'computer',cameraLighting:'original',fps:30,quality:'high',resolution:'1920x1080',countdown:3,micNoise:'off',micGate:'off',micRumble:false,micBackup:true,cameraBackground:'off',cameraBlur:'medium',cameraBackgroundImage:''};
 
 function validateSettings(input, current, devices) {
   const s = {...current};
@@ -20,9 +29,13 @@ function validateSettings(input, current, devices) {
     camera:['none',...devices.cameras.map(d=>d.id)],
     cameraSize:['small','medium','large'], cameraCorner:['bottom-right','bottom-left'],
     cameraCorrection:['computer','off'],cameraLighting:['original','balanced'],
-    fps:[30,60],quality:['high','very_high','ultra'],resolution:['1920x1080','0x0'],systemAudio:[true,false]
+    fps:[30,60],quality:['high','very_high','ultra'],resolution:['1920x1080','0x0'],systemAudio:[true,false],countdown:[0,3],
+    micNoise:['off','on'],micGate:['off','gentle','strong'],micRumble:[true,false],micBackup:[true,false],
+    cameraBackground:['off','blur','image'],cameraBlur:['light','medium','strong']
   };
   for (const [k,v] of Object.entries(input)) {
+    // A background image is a file name inside VidCapture's backgrounds folder.
+    if (k==='cameraBackgroundImage') {if(v!==''&&!validImageName(v))throw new Error(`Invalid setting: ${k}`);s[k]=v;continue;}
     if (!allowed[k] || !allowed[k].includes(v)) throw new Error(`Invalid setting: ${k}`);
     s[k]=v;
   }
@@ -35,15 +48,20 @@ function parseRegion(text) {
   return {kind:'region',x:+m[1],y:+m[2],width:+m[3],height:+m[4],label:`Selected area (${m[3]} × ${m[4]})`};
 }
 
-function buildArgs(target, settings, output) {
+// clean is the live cleanup source (audio-chain.cjs) when it is on; the raw
+// microphone is then added as a final backup track if micBackup is set.
+function buildArgs(target, settings, output, clean=null) {
   const args = target.kind==='monitor' ? ['-w',target.monitor] : ['-w',`${target.width}x${target.height}+${target.x}+${target.y}`];
   args.push('-s',settings.resolution,'-k','h264','-f',String(settings.fps),'-fm','vfr','-q',settings.quality,'-fallback-cpu-encoding','yes','-o',output);
   const audio=[];
   if(settings.systemAudio) audio.push('default_output');
-  if(settings.microphone!=='none') audio.push(settings.microphone==='default_input'?'default_input':`device:${settings.microphone}`);
+  const raw=settings.microphone==='default_input'?'default_input':`device:${settings.microphone}`;
+  const mic=clean?`device:${clean}`:raw;
+  if(settings.microphone!=='none') audio.push(mic);
   if(audio.length) args.push('-a',audio.join('|'),'-ac','aac');
   // Keep isolated tracks as well as the default listening mix for Folio.
-  if(settings.systemAudio && settings.microphone!=='none')args.push('-a',settings.microphone==='default_input'?'default_input':`device:${settings.microphone}`,'-a','default_output');
+  if(settings.systemAudio && settings.microphone!=='none')args.push('-a',mic,'-a','default_output');
+  if(clean&&settings.microphone!=='none'&&settings.micBackup)args.push('-a',raw);
   return args;
 }
 
@@ -59,6 +77,12 @@ class Recorder extends EventEmitter {
   constructor(options={}) {
     super();
     this.dataDir=options.dataDir||path.join(os.homedir(),'.local/state/capture');
+    // Optional services: live microphone cleanup and saved camera controls.
+    this.audioChain=options.audioChain||null;this.cameraSettings=options.cameraSettings||null;this.cameraEffects=options.cameraEffects||null;
+    // Optional per-model tuning (camera-profiles.cjs).
+    this.cameraProfiles=options.cameraProfiles||null;this.cameraKeys=new Map();
+    // A fixed folder (tests) cannot be changed from the app.
+    this.fixedOutput=!!options.outputDir;
     this.outputDir=options.outputDir||path.join(os.homedir(),'Videos/Capture');
     this.state={phase:'idle',elapsed:0,target:null,settings:{...DEFAULTS},devices:{microphones:[],cameras:[],monitors:[]},outputDir:this.outputDir,recent:[],lastFile:null,error:null,cameraPreview:false};
     this.child=null;this.camera=null;this.started=0;this.pausedAt=0;this.pauseTotal=0;this.rawFile=null;this.log='';this.finalizing=null;
@@ -77,6 +101,10 @@ class Recorder extends EventEmitter {
   idleOnly() {if(ACTIVE.has(this.state.phase)) throw new Error('Stop and save this recording before changing its settings.');if(this.state.job?.running)throw new Error('Wait for processing to finish, or cancel it first.');}
   async init() {
     await fs.mkdir(this.dataDir,{recursive:true,mode:0o700});
+    if(!this.fixedOutput){
+      try{const saved=JSON.parse(await fs.readFile(path.join(this.dataDir,'location.json'),'utf8'));if(typeof saved.outputDir==='string'&&path.isAbsolute(saved.outputDir))this.outputDir=saved.outputDir;}catch{}
+      this.state.outputDir=this.outputDir;
+    }
     await fs.mkdir(this.outputDir,{recursive:true,mode:0o700});
     await this.refreshDevices();
     try {const saved=JSON.parse(await fs.readFile(path.join(this.dataDir,'settings.json'),'utf8'));for(const [k,v] of Object.entries(saved)){try{this.state.settings=validateSettings({[k]:v},this.state.settings,this.state.devices);}catch{}}}catch{}
@@ -111,10 +139,18 @@ class Recorder extends EventEmitter {
         if(!/MJPG|YUYV|NV12|RGB3/.test(stdout)) continue;
         const {stdout:info}=await run('v4l2-ctl',['-d',device,'--info'],{timeout:2000});
         const name=info.match(/Card type\s*:\s*(.+)/)?.[1]?.trim()||file;
-        if(!cameras.some(c=>c.name===name)) cameras.push({id:device,name});
+        if(cameras.some(c=>c.name===deviceLabel(name))) continue;
+        const camera={id:device,name:deviceLabel(name)};
+        if(this.cameraProfiles){
+          const key=await cameraKey(device).catch(()=>null);
+          if(key)this.cameraKeys.set(device,key);
+          const profile=publicProfile(this.cameraProfiles.forKey(key));
+          if(profile)camera.profile=profile;
+        }
+        cameras.push(camera);
       }catch{}
     }
-    this.state.devices={microphones:sources.filter(s=>!s.name.endsWith('.monitor')).map(s=>({id:s.name,name:s.description})),cameras,monitors:monitors.map(m=>({id:m.name,name:m.name.startsWith('eDP')?'Laptop display':`${m.description||m.name} (${m.name})`,width:Math.floor((m.transform%2?m.height:m.width)/m.scale),height:Math.floor((m.transform%2?m.width:m.height)/m.scale),x:m.x,y:m.y,scale:m.scale,transform:m.transform}))};
+    this.state.devices={microphones:sources.filter(s=>!s.name.endsWith('.monitor')&&s.name!=='vidcapture_mic'&&!/[|\x00-\x1f\x7f]/.test(s.name)).map(s=>({id:s.name,name:s.description})),cameras,monitors:monitors.map(m=>({id:m.name,name:displayName(m),width:Math.floor((m.transform%2?m.height:m.width)/m.scale),height:Math.floor((m.transform%2?m.width:m.height)/m.scale),pixelWidth:m.transform%2?m.height:m.width,pixelHeight:m.transform%2?m.width:m.height,x:m.x,y:m.y,scale:m.scale,transform:m.transform}))};
     return this.publish();
   }
   async saveSettings(partial) {
@@ -122,7 +158,14 @@ class Recorder extends EventEmitter {
     const settings=validateSettings(partial,this.state.settings,this.state.devices);
     if(partial.cameraCorner&&partial.cameraCorner!==this.state.settings.cameraCorner)this.cameraPlacement=null;
     const wasPreview=!!this.camera;
-    const cameraChanged=['camera','cameraCorrection','cameraLighting'].some(k=>settings[k]!==this.state.settings[k]);
+    let cameraChanged=['camera','cameraCorrection','cameraLighting','cameraBackground'].some(k=>settings[k]!==this.state.settings[k]);
+    // Blur strength and the background image change live in a running effect.
+    const effectChange={};
+    if(settings.cameraBlur!==this.state.settings.cameraBlur)effectChange.blur=this.cameraEffects?.strength(settings.cameraBlur);
+    if(settings.cameraBackgroundImage!==this.state.settings.cameraBackgroundImage&&settings.cameraBackground==='image')effectChange.background=this.cameraEffects?.imagePath(settings.cameraBackgroundImage);
+    if(!cameraChanged&&Object.keys(effectChange).length&&this.camera?.effects){
+      try{await this.cameraEffects.send(this.camera.effects.controlSocket,effectChange);}catch{cameraChanged=true;}
+    }
     if(cameraChanged)await this.closeCamera();
     await fs.writeFile(path.join(this.dataDir,'settings.json.tmp'),JSON.stringify(settings,null,2),{mode:0o600});
     await fs.rename(path.join(this.dataDir,'settings.json.tmp'),path.join(this.dataDir,'settings.json'));
@@ -186,7 +229,8 @@ class Recorder extends EventEmitter {
   async selectWindow(client) {
     if(this.state.phase!=='selecting')this.idleOnly();await this.unmarkWindow();
     if(!/^0x[0-9a-f]+$/i.test(client.address))throw new Error('The window identifier is invalid.');
-    await run('hyprctl',['eval','hl.window_rule({name="capture-selected",match={tag="capture-selected"},border_color="rgb(a4c3b2)",border_size=3,no_anim=true})']);
+    // The record panel draws the bright outline; the tag only marks the window.
+    await run('hyprctl',['eval','hl.window_rule({name="capture-selected",match={tag="capture-selected"},no_anim=true})']);
     await run('hyprctl',['dispatch',`hl.dsp.window.tag({window="address:${client.address}",tag="+capture-selected"})`]);
     return this.set({target:windowTarget(client),error:null});
   }
@@ -232,7 +276,7 @@ class Recorder extends EventEmitter {
   async positionCamera(verify=false,knownClients=null) {
     if(!this.camera||!this.cameraAddress)return;
     const camera=this.camera;
-    const target=this.state.target||this.state.devices.monitors.find(m=>m.id.startsWith('eDP'));
+    const target=this.state.target||(this.state.devices.monitors.find(m=>m.id.startsWith('eDP'))||this.state.devices.monitors[0]);
     if(!target)return;
     let geom=cameraGeometry(target,this.state.settings.cameraSize,this.state.settings.cameraCorner,this.cameraPlacement);
     const monitor=containingMonitor(this.state.devices.monitors,target);
@@ -263,14 +307,16 @@ class Recorder extends EventEmitter {
   async refreshRecent() {
     const items=[];
     for(const name of await fs.readdir(this.outputDir)) {
-      if(!/^Capture-.*\.(mp4|mkv)$/.test(name) || name.endsWith('.saving.mp4')) continue;
-      const p=path.join(this.outputDir,name); const s=await fs.stat(p);
-      if(s.isFile() && s.size>0 && p!==this.rawFile) items.push({path:p,name,bytes:s.size,created:s.mtime.toISOString()});
+      if(!isRecordingName(name)) continue;
+      const p=path.join(this.outputDir,name); let s;try{s=await fs.stat(p);}catch{continue;}
+      if(!s.isFile() || s.size<=0 || p===this.rawFile) continue;
+      let title=null;try{title=JSON.parse(await fs.readFile(path.join(this.dataDir,name+'.json'),'utf8')).title||null;}catch{}
+      items.push({path:p,name,title,bytes:s.size,created:s.mtime.toISOString()});
     }
     this.state.recent=items.sort((a,b)=>b.created.localeCompare(a.created)).slice(0,12);
   }
   async allowedFile(file) {
-    if(typeof file!=='string' || path.dirname(file)!==this.outputDir || !/^Capture-.*\.(mp4|mkv)$/.test(path.basename(file))) throw new Error('Choose a file from your Capture recordings.');
+    if(typeof file!=='string' || path.dirname(file)!==this.outputDir || !isRecordingName(path.basename(file))) throw new Error('Choose a file from your recordings folder.');
     const real=await fs.realpath(file);if(path.dirname(real)!==await fs.realpath(this.outputDir)) throw new Error('File is outside the recordings folder.');
     return real;
   }
@@ -282,28 +328,51 @@ class Recorder extends EventEmitter {
   async openCamera() {
     if(this.state.settings.camera==='none') throw new Error('Choose a camera first.');
     await this.closeCamera();
-    const target=this.state.target||this.state.devices.monitors.find(m=>m.id.startsWith('eDP'));
+    const target=this.state.target||(this.state.devices.monitors.find(m=>m.id.startsWith('eDP'))||this.state.devices.monitors[0]);
     if(!target) throw new Error('Choose an area or display for the camera.');
     if(target.width<90 || target.height<90) throw new Error('Choose a larger recording area to fit the camera.');
     const formats=await run('v4l2-ctl',['-d',this.state.settings.camera,'--list-formats-ext'],{timeout:5000});
     const mode=cameraMode(formats.stdout),circle=mode.circle;
-    let processing;
-    try {
-      const {stdout}=await run('python3',[path.join(__dirname,'camera-controls.py'),this.state.settings.camera],{timeout:5000});
-      processing=JSON.parse(stdout);
-    }catch(e){throw new Error(`The camera profile could not be applied. ${e.stderr?.trim()||e.message}`);}
-    const shader=cameraShader({correct:processing.razerUltra&&this.state.settings.cameraCorrection==='computer',lighting:this.state.settings.cameraLighting});
+    // A camera profile, when one matches this model, adds vendor commands, lens
+    // correction and the Intel GPU decoder. Other cameras use none of these.
+    const device=this.state.settings.camera;
+    let profile=null;
+    if(this.cameraProfiles){
+      const key=this.cameraKeys.get(device)||await cameraKey(device).catch(()=>null);
+      profile=this.cameraProfiles.forKey(key);
+    }
+    const processing={profile:profile?.name||null};
+    if(profile?.extensionUnit){
+      try {
+        const job=run('python3',[path.join(__dirname,'camera-controls.py'),device],{timeout:5000});
+        job.child.stdin.end(JSON.stringify(profile.extensionUnit));
+        processing.extensionUnit=JSON.parse((await job).stdout);
+      }catch(e){throw new Error(`The ${profile.name} profile could not be applied. ${e.stderr?.trim()||e.message}`);}
+    }
+    const correction=profile?.lensCorrection&&this.state.settings.cameraCorrection==='computer'?profile.lensCorrection:null;
+    // Camera controls chosen in Studio settings (exposure, white balance and so on).
+    // A camera that refuses one keeps its own value; the take still starts.
+    if(this.cameraSettings)await this.cameraSettings.apply(this.state.settings.camera).catch(()=>{});
+    // Background blur or replacement runs in a separate GPU process (camera-effects.cjs).
+    // If it was chosen and cannot run, the camera does not open: a take must never
+    // show a background that was meant to be hidden.
+    const effect=this.state.settings.cameraBackground!=='off'?this.state.settings.cameraBackground:null;
+    if(effect){
+      if(!this.cameraEffects||!(await this.cameraEffects.available()))throw new Error('Background effects are not installed. Run scripts/setup-camera-effects.sh, or turn the background effect off.');
+      if(effect==='image')await fs.access(this.cameraEffects.imagePath(this.state.settings.cameraBackgroundImage)).catch(()=>{throw new Error('The background image is missing. Choose another one.');});
+    }
+    const shader=cameraShader({correction,lighting:this.state.settings.cameraLighting});
     const shaderFile=path.join(this.dataDir,'camera-processing.glsl');
     if(shader)await fs.writeFile(shaderFile,shader,{mode:0o600});
-    await fs.writeFile(path.join(this.dataDir,'camera-mode.json'),JSON.stringify({device:this.state.settings.camera,...mode,...processing,softwareCorrection:!!(processing.razerUltra&&this.state.settings.cameraCorrection==='computer'),lighting:this.state.settings.cameraLighting},null,2),{mode:0o600});
+    await fs.writeFile(path.join(this.dataDir,'camera-mode.json'),JSON.stringify({device:this.state.settings.camera,...mode,...processing,softwareCorrection:!!correction,lighting:this.state.settings.cameraLighting},null,2),{mode:0o600});
     let intelDevice=null;
-    if(processing.razerUltra && mode.input==='mjpeg') {
+    if(profile?.gpuDecode==='intel' && mode.input==='mjpeg') {
       for(const name of (await fs.readdir('/sys/class/drm')).filter(n=>/^renderD\d+$/.test(n))) {
         if((await fs.readFile(`/sys/class/drm/${name}/device/vendor`,'utf8').catch(()=>'' )).trim()==='0x8086') {
           intelDevice=`/dev/dri/${name}`;break;
         }
       }
-      if(!intelDevice)throw new Error('The low-latency Razer preview requires the Intel graphics device.');
+      if(!intelDevice)throw new Error(`The ${profile.name} profile needs the Intel graphics device for its low-latency preview.`);
     }
     const initialMonitor=containingMonitor(this.state.devices.monitors,target);
     const initialGeometry=cameraGeometry(target,this.state.settings.cameraSize,this.state.settings.cameraCorner,this.cameraPlacement);
@@ -341,17 +410,42 @@ class Recorder extends EventEmitter {
       transport.once('close',()=>fs.writeFile(path.join(this.dataDir,'camera-transport.log'),transportLog,{mode:0o600}).catch(()=>{}));
       transport.on('error',e=>{cameraLog=e.message;});
     }
-    const inputOptions=transport?['--demuxer-lavf-format=nut','--rebase-start-time=no','--demuxer-thread=no']:[`--demuxer-lavf-o-add=video_size=${mode.width}x${mode.height},framerate=${mode.fps}${mode.input?',input_format='+mode.input:''}`];
+    let inputOptions=transport?['--demuxer-lavf-format=nut','--rebase-start-time=no','--demuxer-thread=no']:[`--demuxer-lavf-o-add=video_size=${mode.width}x${mode.height},framerate=${mode.fps}${mode.input?',input_format='+mode.input:''}`];
+    let source=transport?'fd://0':`av://v4l2:${this.state.settings.camera}`,cameraInput=transport?transport.stdout:'ignore',videoPipeline=pipeline,effects=null;
+    if(effect){
+      // The effect process decodes the camera (Intel VA-API for the transport) and
+      // sends square RGB frames; mpv then only draws them with the bubble shader.
+      const size=transport?processingCircle:Math.min(mode.height,Math.max(360,processingCircle))&~1;
+      const effectSocket=path.join(controlDir,'effects.sock');
+      effects=spawn(this.cameraEffects.python,this.cameraEffects.args({size,input:transport?'transport':'v4l2',render:intelDevice,device:this.state.settings.camera,mode,settings:this.state.settings,socket:effectSocket}),{stdio:[transport?transport.stdout:'ignore','pipe','pipe']});
+      if(transport)transport.stdout.destroy();
+      effects.controlSocket=effectSocket;
+      let effectsLog='';
+      const ready=new Promise((resolve,reject)=>{
+        const timer=setTimeout(()=>reject(new Error('The background effect took too long to start.')),30000);
+        effects.stderr.on('data',b=>{effectsLog=(effectsLog+b).slice(-4000);cameraLog=(cameraLog+b).slice(-4000);if(/^ready$/m.test(effectsLog)){clearTimeout(timer);resolve();}});
+        effects.once('exit',()=>{clearTimeout(timer);reject(new Error(`The background effect could not start. ${effectsLog.replace(/^ready$/m,'').trim().split('\n').pop()||''}`.trim()));});
+        effects.once('error',e=>{clearTimeout(timer);reject(e);});
+      });
+      try{await ready;}catch(e){
+        effects.kill('SIGKILL');if(transport&&transport.exitCode===null)transport.kill('SIGTERM');
+        await fs.writeFile(path.join(this.dataDir,'camera.log'),cameraLog,{mode:0o600}).catch(()=>{});
+        await fs.rm(controlDir,{recursive:true,force:true}).catch(()=>{});throw e;
+      }
+      source='-';cameraInput=effects.stdout;
+      videoPipeline=['--gpu-api=opengl','--gpu-context=wayland'];
+      inputOptions=['--demuxer=rawvideo',`--demuxer-rawvideo-w=${size}`,`--demuxer-rawvideo-h=${size}`,'--demuxer-rawvideo-mp-format=rgb24',`--demuxer-rawvideo-fps=${mode.fps||30}`];
+    }
     const camera=spawn('mpv',[
-      transport?'fd://0':`av://v4l2:${this.state.settings.camera}`,'--no-config','--vo=gpu-next',...pipeline,
+      source,'--no-config','--vo=gpu-next',...videoPipeline,
       `--glsl-shaders=${shaderFile}`,`--input-ipc-server=${socket}`,
       '--background=none','--panscan=1.0','--wayland-app-id=capture-camera',
       '--title=Capture camera','--no-border','--no-osc','--no-audio','--no-input-default-bindings',
       '--profile=low-latency','--untimed','--cache=no','--demuxer-readahead-secs=0',
       ...inputOptions
-    ],{stdio:[transport?transport.stdout:'ignore','ignore','pipe'],env:cameraEnv});
-    if(transport)transport.stdout.destroy();
-    camera.transport=transport;
+    ],{stdio:[cameraInput,'ignore','pipe'],env:cameraEnv});
+    if(effects)effects.stdout.destroy();else if(transport)transport.stdout.destroy();
+    camera.transport=transport;camera.effects=effects;
     camera.controlSocket=socket;
     camera.once('exit',()=>{
       fs.rm(controlDir,{recursive:true,force:true}).catch(()=>{});
@@ -370,7 +464,7 @@ class Recorder extends EventEmitter {
         if(client) break;await delay(100);
       }
       if(!client) throw new Error('The camera preview did not open.');
-      if(intelDevice) {
+      if(intelDevice&&!effects) {
         const decoder=await cameraCommand(socket,['get_property','hwdec-current']);
         if(decoder!=='vaapi')throw new Error('The low-latency camera decoder did not start. Recording was not started.');
       }
@@ -395,6 +489,12 @@ class Recorder extends EventEmitter {
       // This preview writes no media; a stuck child can be terminated directly.
       await Promise.race([exited,delay(2000)]);
       if(camera.exitCode===null&&!camera.signalCode){camera.kill('SIGKILL');await Promise.race([exited,delay(1000)]);}
+    }
+    const effects=camera?.effects;
+    if(effects && effects.exitCode===null && !effects.signalCode) {
+      const exited=new Promise(resolve=>effects.once('exit',resolve));
+      effects.kill('SIGTERM');await Promise.race([exited,delay(1500)]);
+      if(effects.exitCode===null&&!effects.signalCode){effects.kill('SIGKILL');await Promise.race([exited,delay(1000)]);}
     }
     const transport=camera?.transport;
     if(transport && transport.exitCode===null && !transport.signalCode) {
@@ -429,7 +529,11 @@ class Recorder extends EventEmitter {
         this.followMonitor=containingMonitor(this.state.devices.monitors,target)?.id;
         await this.writeFollowState(target);env.CAPTURE_FOLLOW_STATE=this.followFile;
       }
-      const child=spawn(engine,buildArgs(target,this.state.settings,this.rawFile),{stdio:['ignore','ignore','pipe'],env});
+      // Live microphone cleanup, if on. A failure stops the start so a take never
+      // silently records without the cleanup that was chosen.
+      const clean=this.audioChain?await this.audioChain.ensure(this.state.settings):null;
+      this.takeAudio={clean:!!clean,backup:!!(clean&&this.state.settings.microphone!=='none'&&this.state.settings.micBackup)};
+      const child=spawn(engine,buildArgs(target,this.state.settings,this.rawFile,clean),{stdio:['ignore','ignore','pipe'],env});
       this.child=child;
       child.stderr.on('data',b=>{this.log=(this.log+b).slice(-32000);});
       this.exitPromise=new Promise(resolve=>{child.once('error',e=>{this.log+=e.message;resolve({code:1});});child.once('exit',(code,signal)=>resolve({code,signal}));});
@@ -486,9 +590,66 @@ class Recorder extends EventEmitter {
     }catch(e){error=error||`The original recording was kept as MKV. ${e.message}`;}
     this.child=null;this.rawFile=null;this.followMonitor=null;await fs.rm(path.join(this.dataDir,'active.json'),{force:true});await this.refreshRecent();
     const exists=this.state.recent.some(f=>f.path===saved);
-    if(exists){const s=this.state.settings;await fs.writeFile(path.join(this.dataDir,path.basename(saved)+'.json'),JSON.stringify({settings:s,micTrack:s.microphone==='none'?null:(s.systemAudio?1:0),systemTrack:s.systemAudio?(s.microphone==='none'?0:2):null}),{mode:0o600});}
+    if(exists){
+      const s=this.state.settings,t=this.state.target;
+      // screen and app give the title writer context when nothing is said.
+      await fs.writeFile(path.join(this.dataDir,path.basename(saved)+'.json'),JSON.stringify({settings:s,micTrack:s.microphone==='none'?null:(s.systemAudio?1:0),systemTrack:s.systemAudio?(s.microphone==='none'?0:2):null,
+        rawMicTrack:this.takeAudio?.backup?(s.systemAudio?3:1):null,micCleanup:this.takeAudio?.clean?{noise:s.micNoise,gate:s.micGate,rumble:s.micRumble}:null,
+        recordedAt:new Date(this.started||Date.now()).toISOString(),screen:t?.kind==='window'?(t.label||null):t?.kind==='monitor'?(t.label||null):null,app:t?.kind==='window'?(t.class||null):null}),{mode:0o600});
+    }
     return this.set({phase:exists?'saved':'error',lastFile:exists?saved:null,error:error||(!exists?'No recording was saved.':null),cameraPreview:false});
+  }
+  // Gives a recording a new name, moving every sidecar keyed by its file name
+  // (metadata, transcript, waveform caches) along with it.
+  async renameRecording(file,stem){
+    const real=await this.allowedFile(file);
+    if(this.rawFile&&path.resolve(real)===path.resolve(this.rawFile))throw new Error('This recording is still being saved.');
+    const ext=path.extname(real),from=path.basename(real);
+    const clean=String(stem||'').replace(/[\/\\:*?"<>|\x00-\x1f]/g,' ').replace(/\s+/g,' ').trim().replace(/^\.+/,'').slice(0,120);
+    if(!clean)throw new Error('Enter a name.');
+    let to=clean+ext;
+    if(to===from)return real;
+    for(let n=2;;n++){
+      try{await fs.access(path.join(this.outputDir,to));to=`${clean} ${n}${ext}`;}catch{break;}
+      if(n>99)throw new Error('Too many recordings share this name.');
+    }
+    const dest=path.join(this.outputDir,to);
+    // Edited and enhanced copies of this recording keep its name as their prefix.
+    const fromStem=path.basename(from,ext),toStem=path.basename(to,ext);
+    const moves=[[from,to]];
+    for(const name of await fs.readdir(this.outputDir).catch(()=>[])){
+      if(name===from||!isRecordingName(name)||versionBase(name)!==fromStem)continue;
+      const next=toStem+name.slice(fromStem.length);
+      if(await fs.access(path.join(this.outputDir,next)).then(()=>true,()=>false))continue;
+      moves.push([name,next]);
+    }
+    const sidecars=await fs.readdir(this.dataDir).catch(()=>[]);
+    const patch={};
+    for(const [a,b] of moves){
+      const src=path.join(this.outputDir,a),dst=path.join(this.outputDir,b);
+      try{await fs.rename(src,dst);}catch(e){if(a===from)throw e;continue;}
+      for(const name of sidecars)if(name.startsWith(a+'.'))await fs.rename(path.join(this.dataDir,name),path.join(this.dataDir,b+name.slice(a.length))).catch(()=>{});
+      if(this.state.lastFile===src)patch.lastFile=dst;
+      if(this.state.share?.file===src)patch.share={...this.state.share,file:dst};
+    }
+    await this.refreshRecent();
+    this.set({...patch,renamed:{from:real,to:dest,at:Date.now()}});
+    return dest;
+  }
+  // Where new recordings are saved. Existing recordings stay where they are.
+  async setOutputDir(dir){
+    this.idleOnly();
+    if(this.fixedOutput)throw new Error('The recordings folder is fixed for this session.');
+    if(typeof dir!=='string'||!path.isAbsolute(dir))throw new Error('Choose a folder.');
+    await fs.mkdir(dir,{recursive:true,mode:0o700});
+    const real=await fs.realpath(dir);
+    await fs.access(real,fsConstants.W_OK).catch(()=>{throw new Error('VidCapture cannot save to that folder.');});
+    this.outputDir=real;
+    await fs.writeFile(path.join(this.dataDir,'location.json.tmp'),JSON.stringify({outputDir:real}),{mode:0o600});
+    await fs.rename(path.join(this.dataDir,'location.json.tmp'),path.join(this.dataDir,'location.json'));
+    await this.refreshRecent();
+    return this.set({outputDir:real,lastFile:null});
   }
   async dispose(){this.disposed=true;clearInterval(this.followTimer);await this.unmarkWindow();clearInterval(this.timer);clearTimeout(this.deviceRefreshTimer);this.deviceWatcher?.close();await this.closeCamera();}
 }
-module.exports={Recorder,validateSettings,parseRegion,buildArgs,cameraGeometry,DEFAULTS,ACTIVE};
+module.exports={Recorder,validateSettings,parseRegion,buildArgs,cameraGeometry,isRecordingName,DEFAULTS,ACTIVE};

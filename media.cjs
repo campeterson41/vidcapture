@@ -11,8 +11,9 @@ const PRESET='16e995ab0baa5adf0711f14c95bc9e6191afa03b02752e20771ced0f864738a8';
 const FAST_AUDIO='aformat=sample_rates=48000:channel_layouts=mono,highpass=f=70,afftdn=nr=8:nf=-45:tn=1:gs=5,dynaudnorm=f=500:g=15:p=0.85:m=3:r=0.16:t=0.01';
 const PEAK_GUARD='alimiter=limit=0.708:level=false:latency=true';
 async function hash(file){const h=crypto.createHash('sha256');for await(const chunk of createReadStream(file))h.update(chunk);return h.digest('hex');}
+const MAX_SECTIONS=600;
 function validKeep(keep,duration){
-  if(!Array.isArray(keep)||!keep.length||keep.length>100)throw new Error('Keep at least one section, with no more than 100 sections.');
+  if(!Array.isArray(keep)||!keep.length||keep.length>MAX_SECTIONS)throw new Error(`Keep at least one section, with no more than ${MAX_SECTIONS} sections.`);
   let end=0;
   for(const p of keep){if(!Array.isArray(p)||p.length!==2||!p.every(Number.isFinite)||p[0]<end-0.00001||p[0]<0||p[1]>duration+0.01||p[1]-p[0]<0.099)throw new Error('Each kept section must be ordered, inside the recording, and at least 0.1 seconds long.');end=p[1];}
   return keep.map(p=>[Math.max(0,p[0]),Math.min(duration,p[1])]);
@@ -34,7 +35,33 @@ function exportArgs(file,graph,temp,encoder,{device,video}={}){
   if(hardwareDecodable(video))return ['-nostdin','-v','error','-hwaccel','vaapi','-hwaccel_device',device,'-hwaccel_output_format','vaapi','-i',file,'-filter_complex',graph.filter,...maps(graph.outputs),...encode,...audio];
   return ['-nostdin','-v','error','-init_hw_device',`vaapi=capture:${device}`,'-filter_hw_device','capture','-i',file,'-filter_complex',`${graph.filter};[video]format=nv12,hwupload[hwvideo]`,...maps(['[hwvideo]',...graph.outputs.slice(1)]),...encode,...audio];
 }
+// Up to this many sections, each one is trimmed separately (the long-tested path).
+// Beyond it, every trim branch would receive every frame, so a transcript edit with
+// hundreds of small cuts drops removed frames with select filters instead. Audio is
+// split into 5 ms blocks first so cuts land within 5 ms. Long expressions are
+// grouped because FFmpeg rejects a single expression with hundreds of terms.
+const TRIM_SECTIONS=24,CUT_GROUP=40;
+// Enhancement keeps the timeline, so the source's cut plan carries over to the
+// enhanced copy. Ends are clamped to the copy's own measured duration.
+function carryKeep(keep,duration){
+  try{return validKeep((keep||[]).map(([a,b])=>[a,Math.min(b,duration)]).filter(([a,b])=>b-a>=0.1),duration);}
+  catch{return [[0,duration]];}
+}
+function cutsFrom(keep){const cuts=[];let prev=0;for(const [a,b] of keep){if(a>prev+1e-6)cuts.push([prev,a]);prev=b;}return {cuts,tail:prev};}
+function selectGraph(keep,audioCount){
+  const {cuts,tail}=cutsFrom(keep),n=v=>Number(v.toFixed(6));
+  const all=[...cuts,[tail,1e9]],groups=[];for(let i=0;i<all.length;i+=CUT_GROUP)groups.push(all.slice(i,i+CUT_GROUP));
+  const drop=kind=>groups.map(g=>`${kind}=${g.map(([a,b])=>`not(gte(t\\,${n(a)})*lt(t\\,${n(b)}))`).join('*')}`).join(',');
+  // Removing a cut shifts every later frame back by its length. Applying the latest
+  // group first keeps each comparison on the original timeline.
+  const shiftGroups=[];for(let i=0;i<cuts.length;i+=CUT_GROUP)shiftGroups.push(cuts.slice(i,i+CUT_GROUP));
+  const shift=shiftGroups.reverse().map(g=>`setpts=PTS-(${g.map(([a,b])=>`gte(T\\,${n(b)})*${n(b-a)}`).join('+')})/TB`);
+  const filters=[`[0:v:0]${drop('select')}${shift.length?','+shift.join(','):''}[video]`];
+  for(let j=0;j<audioCount;j++)filters.push(`[0:a:${j}]aresample=async=1:first_pts=0,asetnsamples=n=240:p=0,${drop('aselect')},asetpts=N/SR/TB[audio${j}]`);
+  return {filter:filters.join(';'),outputs:['[video]',...Array.from({length:audioCount},(_,j)=>`[audio${j}]`)]};
+}
 function editGraph(keep,audioCount){
+  if(keep.length>TRIM_SECTIONS)return selectGraph(keep,audioCount);
   const filters=[],inputs=[];
   keep.forEach(([a,b],i)=>{
     filters.push(`[0:v:0]trim=start=${a}:end=${b},setpts=PTS-STARTPTS[v${i}]`);inputs.push(`[v${i}]`);
@@ -60,7 +87,15 @@ class MediaTools{
     const audios=probe.streams.filter(s=>s.codec_type==='audio');
     const quickAudioReady=await fs.access(path.join(__dirname,'capture_voice_profile.json')).then(()=>fs.access(path.join(this.runtime,'f-venv/bin/python'))).then(()=>true,()=>false);
     const folioReady=await fs.access(path.join(__dirname,'capture_folio.py')).then(()=>fs.access(path.join(this.folioRoot,'bin/folio'))).then(()=>true,()=>false);
-    return {quickAudioReady,folioReady,path:file,name:path.basename(file),url:`capture-media://recording/${encodeURIComponent(path.basename(file))}`,duration,width:video.width,height:video.height,hasAudio:audios.length>0,canEnhance:Number.isInteger(meta.micTrack)&&meta.micTrack>=0&&meta.micTrack<audios.length,keep};
+    // Editing is one ongoing project: an enhanced copy re-enhances from its
+    // source audio, and a saved version points back to what it was cut from.
+    const exists=f=>typeof f==='string'?fs.access(f).then(()=>f,()=>null):Promise.resolve(null);
+    const canEnhance=Number.isInteger(meta.micTrack)&&meta.micTrack>=0&&meta.micTrack<audios.length;
+    let enhanceSource=canEnhance?file:null;
+    if(!enhanceSource&&await exists(meta.enhancedFrom)){const m=await this.metadata(meta.enhancedFrom);if(Number.isInteger(m.micTrack)&&m.micTrack>=0)enhanceSource=meta.enhancedFrom;}
+    const enhanced=meta.enhancedFrom?(meta.folioReceipt?'folio':meta.audioEnhancement?.mode?.startsWith('quick')?'quick':'fast'):null;
+    const editedFrom=await exists(meta.editedFrom);
+    return {enhanced,enhanceSource,editedFrom,quickAudioReady,folioReady,path:file,name:path.basename(file),url:`capture-media://recording/${encodeURIComponent(path.basename(file))}`,duration,width:video.width,height:video.height,hasAudio:audios.length>0,canEnhance:Number.isInteger(meta.micTrack)&&meta.micTrack>=0&&meta.micTrack<audios.length,keep};
   }
   async getWaveform(file) {
     file=await this.rec.allowedFile(file);
@@ -95,13 +130,14 @@ class MediaTools{
   }
   dispose(){for(const child of this.waveformProcesses)child.kill('SIGTERM');this.waveforms.clear();}
   async saveEdits(file,keep){
-    file=await this.rec.allowedFile(file);const info=await this.getMedia(file);keep=validKeep(keep,info.duration);
+    file=await this.rec.allowedFile(file);const info=await this.getMedia(file);keep=validKeep((Array.isArray(keep)?keep:[]).map(p=>Array.isArray(p)&&p.length===2?[p[0],Math.min(p[1],info.duration)]:p),info.duration);
     const meta=await this.metadata(file);await fs.writeFile(this.metadataPath(file)+'.tmp',JSON.stringify({...meta,keep}),{mode:0o600});await fs.rename(this.metadataPath(file)+'.tmp',this.metadataPath(file));return {keep};
   }
   startJob(kind,stage,work){
     this.rec.idleOnly();this.cancelled=false;this.jobLog='';const startedAt=Date.now();this.rec.set({job:{running:true,kind,stage,error:null,output:null},error:null});
     this.task=(async()=>{
-      try{const output=await work();if(this.cancelled)throw new Error('Processing canceled.');await this.rec.refreshRecent();this.rec.set({job:{running:false,kind,stage:'Finished',error:null,output},phase:'saved',lastFile:output});}
+      try{const output=await work();if(this.cancelled)throw new Error('Processing canceled.');
+        if(['folio','fast-audio','quick-audio'].includes(kind)&&this.onEnhanced)await this.onEnhanced(output).catch(()=>{});await this.rec.refreshRecent();this.rec.set({job:{running:false,kind,stage:'Finished',error:null,output},phase:'saved',lastFile:output});}
       catch(e){const error=this.cancelled?'Processing canceled. The original is unchanged.':e.message;this.rec.set({job:{running:false,kind,stage:this.cancelled?'Canceled':'Could not finish',error,output:null},error});}
       finally{
         if(['folio','fast-audio','quick-audio'].includes(kind)){
@@ -159,7 +195,6 @@ class MediaTools{
     const started=Date.now();file=await this.rec.allowedFile(file);
     const info=await this.getMedia(file),meta=await this.metadata(file);
     if(!info.canEnhance)throw new Error('This recording has no isolated microphone track to enhance.');
-    if(info.keep.length!==1||info.keep[0][0]>0.01||Math.abs(info.keep[0][1]-info.duration)>0.1)throw new Error('Save an edited copy first, then enhance that copy.');
     const probe=await this.probe(file),audios=probe.streams.filter(s=>s.codec_type==='audio');
     const system=meta.systemTrack;
     if(system!=null&&(!Number.isInteger(system)||system<0||system>=audios.length||system===meta.micTrack))throw new Error('The system audio track could not be identified safely.');
@@ -181,7 +216,7 @@ class MediaTools{
       const audio=check.streams.filter(s=>s.codec_type==='audio');
       if(!video||video.codec_name!==originalVideo.codec_name||video.width!==originalVideo.width||video.height!==originalVideo.height||audio.length!==1||Math.abs(Number(check.format.duration)-info.duration)>0.15||Math.abs(Number(audio[0].duration)-Number(audios[meta.micTrack].duration))>0.15)throw new Error('Enhanced copy failed its audio/video timing check. The original is unchanged.');
       this.stage('Finishing enhanced copy');
-      await fs.writeFile(this.metadataPath(output),JSON.stringify({enhancedFrom:file,micTrack:null,systemTrack:null,keep:[[0,Number(check.format.duration)]],audioEnhancement:{mode:'fast-cleanup-v1',elapsedSeconds:(Date.now()-started)/1000,filter:graph,videoStreamCopied:true}}),{mode:0o600});
+      await fs.writeFile(this.metadataPath(output),JSON.stringify({enhancedFrom:file,micTrack:null,systemTrack:null,keep:carryKeep(info.keep,Number(check.format.duration)),audioEnhancement:{mode:'fast-cleanup-v1',elapsedSeconds:(Date.now()-started)/1000,filter:graph,videoStreamCopied:true}}),{mode:0o600});
       await fs.rename(pending,output);return output;
     }catch(error){await fs.rm(this.metadataPath(output),{force:true});throw error;}
     finally{await fs.rm(pending,{force:true});}
@@ -192,7 +227,6 @@ class MediaTools{
     const started=Date.now();file=await this.rec.allowedFile(file);
     const info=await this.getMedia(file),meta=await this.metadata(file);
     if(!info.canEnhance)throw new Error('This recording has no isolated microphone track to enhance.');
-    if(info.keep.length!==1||info.keep[0][0]>0.01||Math.abs(info.keep[0][1]-info.duration)>0.1)throw new Error('Save an edited copy first, then enhance that copy.');
     const probe=await this.probe(file),audios=probe.streams.filter(s=>s.codec_type==='audio'),system=meta.systemTrack;
     if(system!=null&&(!Number.isInteger(system)||system<0||system>=audios.length||system===meta.micTrack))throw new Error('The system audio track could not be identified safely.');
     const disk=await fs.statfs(this.rec.outputDir),sourceStat=await fs.stat(file);
@@ -222,7 +256,7 @@ class MediaTools{
       const check=await this.probe(pending),video=check.streams.find(s=>s.codec_type==='video'),originalVideo=probe.streams.find(s=>s.codec_type==='video'),audio=check.streams.filter(s=>s.codec_type==='audio');
       if(!video||video.codec_name!==originalVideo.codec_name||video.width!==originalVideo.width||video.height!==originalVideo.height||audio.length!==1||Math.abs(Number(check.format.duration)-info.duration)>0.15||Math.abs(Number(audio[0].duration)-Number(audios[meta.micTrack].duration))>0.15)throw new Error('Enhanced copy failed its audio/video timing check. The original is unchanged.');
       this.stage('Finishing enhanced copy');
-      await fs.writeFile(this.metadataPath(output),JSON.stringify({enhancedFrom:file,micTrack:null,systemTrack:null,keep:[[0,Number(check.format.duration)]],audioEnhancement:{...receipt,mode:receipt.version,elapsedSeconds:(Date.now()-started)/1000,videoStreamCopied:true,processorSHA256:await hash(script),profileSHA256:await hash(profile)}}),{mode:0o600});
+      await fs.writeFile(this.metadataPath(output),JSON.stringify({enhancedFrom:file,micTrack:null,systemTrack:null,keep:carryKeep(info.keep,Number(check.format.duration)),audioEnhancement:{...receipt,mode:receipt.version,elapsedSeconds:(Date.now()-started)/1000,videoStreamCopied:true,processorSHA256:await hash(script),profileSHA256:await hash(profile)}}),{mode:0o600});
       await fs.rename(pending,output);return output;
     }catch(error){await fs.rm(this.metadataPath(output),{force:true});throw error;}
     finally{await fs.rm(work,{recursive:true,force:true});}
@@ -272,9 +306,9 @@ class MediaTools{
       const result=await this.probe(pending);if(Math.abs(Number(result.format.duration)-info.duration)>0.15)throw new Error('Enhanced video failed its duration check.');
       this.stage('Finishing enhanced copy');
       await fs.rename(pending,output);
-      await fs.writeFile(this.metadataPath(output),JSON.stringify({enhancedFrom:file,folioReceipt:receipt,micTrack:null,systemTrack:null,keep:[[0,Number(result.format.duration)]]}),{mode:0o600});
+      await fs.writeFile(this.metadataPath(output),JSON.stringify({enhancedFrom:file,folioReceipt:receipt,micTrack:null,systemTrack:null,keep:carryKeep(info.keep,Number(result.format.duration))}),{mode:0o600});
       return output;
     }finally{await fs.rm(work,{recursive:true,force:true});}
   });}
 }
-module.exports={MediaTools,validKeep,editGraph,hash,exportArgs,hardwareDecodable,intelRenderNode};
+module.exports={carryKeep,MediaTools,validKeep,editGraph,selectGraph,MAX_SECTIONS,hash,exportArgs,hardwareDecodable,intelRenderNode};

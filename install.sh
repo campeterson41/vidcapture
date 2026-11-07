@@ -30,7 +30,7 @@ cat > "$capture_desktop" <<EOF
 Type=Application
 Name=VidCapture
 Comment=Record, trim, and enhance local screen recordings
-Exec="$capture_launcher"
+Exec="$capture_launcher" --panel
 Icon=$capture_source/ui/icon.png
 Terminal=false
 Categories=AudioVideo;Recorder;

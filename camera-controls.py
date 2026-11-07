@@ -1,4 +1,12 @@
-"""Apply the verified Kiyo Pro Ultra 4K30 capture profile without saving flash."""
+"""Run a camera profile's UVC extension unit commands. Nothing is saved to flash.
+
+Usage: camera-controls.py /dev/videoN < profile-extension-unit.json
+
+The profile names the extension unit by GUID, its control size, the selectors
+used to send a command and read the reply, a status command, and rules: when a
+byte of the status reply does not equal the wanted value, send that rule's
+command. The status is read again afterwards and every rule must then hold.
+"""
 import ctypes
 import fcntl
 import json
@@ -9,19 +17,26 @@ import sys
 import time
 import uuid
 
+UVC_SET_CUR = 0x01
+UVC_GET_CUR = 0x81
+UVC_GET_LEN = 0x85
 
-def prepare(device):
+
+def run(device, unit_profile):
     if not re.fullmatch(r"/dev/video\d+", device):
         raise ValueError("Invalid camera device")
     node = (Path('/sys/class/video4linux') / Path(device).name / 'device').resolve(strict=True)
     usb = next((p for p in [node, *node.parents] if (p / 'idVendor').exists()), None)
-    if usb is None or (usb / 'idVendor').read_text().strip() != '1532' or (usb / 'idProduct').read_text().strip() != '0e08':
-        return {'razerUltra': False}
+    if usb is None:
+        raise RuntimeError('The camera is not a USB camera')
+    size = int(unit_profile['size'])
     descriptors = (usb / 'descriptors').read_bytes()
-    guid = uuid.UUID('23e49ed0-1178-4f31-ae52-d2fb8a8d3b48').bytes_le
+    guid = uuid.UUID(unit_profile['guid']).bytes_le
     position = descriptors.find(guid)
-    if position < 1 or descriptors[position - 1] != 6:
-        raise RuntimeError('The Razer camera control interface has changed')
+    # In a UVC extension unit descriptor, bUnitID sits just before the GUID.
+    unit = descriptors[position - 1] if position >= 1 else 0
+    if unit < 1:
+        raise RuntimeError('The camera control interface has changed')
 
     class Query(ctypes.Structure):
         _fields_ = [('unit', ctypes.c_uint8), ('selector', ctypes.c_uint8),
@@ -32,42 +47,39 @@ def prepare(device):
     try:
         def query(selector, operation, data):
             buf = ctypes.create_string_buffer(data, len(data))
-            item = Query(6, selector, operation, len(data), ctypes.addressof(buf))
+            item = Query(unit, selector, operation, len(data), ctypes.addressof(buf))
             fcntl.ioctl(fd, request, item)
             return buf.raw
 
-        for selector in (1, 2):
-            if int.from_bytes(query(selector, 0x85, bytes(2)), 'little') != 8:
-                raise RuntimeError('Unexpected Razer control size')
+        setter, getter = int(unit_profile['setSelector']), int(unit_profile['getSelector'])
+        for selector in (setter, getter):
+            if int.from_bytes(query(selector, UVC_GET_LEN, bytes(2)), 'little') != size:
+                raise RuntimeError('Unexpected camera control size')
 
         def command(value):
-            query(1, 1, bytes.fromhex(value))
+            query(setter, UVC_SET_CUR, bytes.fromhex(value))
             time.sleep(0.05)
-            reply = query(2, 0x81, bytes(8))
+            reply = query(getter, UVC_GET_CUR, bytes(size))
             if reply[0] != 0:
-                raise RuntimeError('The camera rejected the 30 fps profile')
+                raise RuntimeError(unit_profile.get('error') or 'The camera rejected a command')
             return reply
 
-        # Verified against Razer's 0E08 middleware and this device. Native HDR and
-        # lens correction each reduce actual 4K delivery to 24 fps. Keep other
-        # image controls untouched; Capture performs optional correction on GPU.
-        before = command('c003110000000000')
-        if before[2] != 1:
-            command('ff01000300000000')
-        if before[3] != 0:
-            command('ff02000000000000')
-        after = command('c003110000000000')
-        if after[2] != 1 or after[3] != 0:
-            raise RuntimeError('The Razer camera did not accept the 30 fps profile')
-        return {'razerUltra': True, 'hardwareHDR': False, 'hardwareCorrection': False,
-                'before': before.hex(), 'after': after.hex()}
+        rules = unit_profile['ensure']
+        before = command(unit_profile['status'])
+        for rule in rules:
+            if before[rule['byte']] != rule['equals']:
+                command(rule['send'])
+        after = command(unit_profile['status'])
+        if any(after[rule['byte']] != rule['equals'] for rule in rules):
+            raise RuntimeError(unit_profile.get('error') or 'The camera did not accept its profile')
+        return {'before': before.hex(), 'after': after.hex()}
     finally:
         os.close(fd)
 
 
 if __name__ == '__main__':
     try:
-        print(json.dumps(prepare(sys.argv[1])))
+        print(json.dumps(run(sys.argv[1], json.load(sys.stdin))))
     except Exception as error:
         print(str(error), file=sys.stderr)
         sys.exit(1)

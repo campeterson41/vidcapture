@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>VidCapture countdown</title>
+  <link rel="stylesheet" href="surfaces.css">
+</head>
+<body class="countdown">
+  <main class="count-card" role="timer" aria-live="assertive" aria-label="Recording starts in">
+    <span class="count-number" id="count">3</span>
+    <button type="button" class="count-cancel" id="cancel">Cancel</button>
+  </main>
+  <script src="countdown.js"></script>
+</body>
+</html>

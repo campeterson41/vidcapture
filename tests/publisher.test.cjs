@@ -169,3 +169,43 @@ test('self-hosted sharing binds its key to an HTTPS origin and rejects unsafe co
   }
  }finally{await fs.rm(f.root,{recursive:true,force:true});}
 });
+
+test('sharing without a connection opens the site, waits for approval, then saves a private token',async()=>{
+ const f=await fixture(1);const config=path.join(f.rec.dataDir,'publishing.json');await fs.rm(config);
+ try{
+  const opened=[],seen=[];let hash,polls=0,token;
+  const s=service(f.size);
+  const fetch=async(url,options)=>{
+   const route=url.slice(ORIGIN.length);seen.push(route);
+   if(route==='/api/pair/start'){assert.equal(options.headers.Authorization,undefined);const body=JSON.parse(options.body);hash=body.hash;assert.match(hash,/^[a-f0-9]{64}$/);assert.ok(body.name);return Response.json({url:ORIGIN+'/connect-app#'+'c'.repeat(32),code:'AB2C-DE3F'});}
+   if(route==='/api/pair/status'){token=options.headers.Authorization.slice(7);assert.equal(require('node:crypto').createHash('sha256').update(token).digest('hex'),hash);return Response.json({status:++polls<3?'pending':'approved'});}
+   return s.fetch(url,{...options,headers:{...options.headers,Authorization:`Bearer ${TOKEN}`}});
+  };
+  const publisher=new Publisher(f.rec,f.media,{fetch,openExternal:async url=>opened.push(url),pairInterval:1});
+  await publisher.init();assert.equal(f.rec.state.publishingReady,false);
+  publisher.publish(f.file,'Fixture');const {error}=await f.media.task;assert.ifError(error);
+  assert.deepEqual(opened,[ORIGIN+'/connect-app#'+'c'.repeat(32)]);
+  assert.ok(f.media.stages.some(x=>x.includes('AB2C-DE3F')));assert.equal(polls,3);assert.equal(f.rec.state.publishingReady,true);
+  const saved=JSON.parse(await fs.readFile(config,'utf8'));assert.deepEqual(saved,{origin:ORIGIN,token});
+  assert.equal((await fs.stat(config)).mode&0o777,0o600);
+  assert.ok(f.rec.state.share.url.startsWith(ORIGIN+'/v/'));
+ }finally{await fs.rm(f.root,{recursive:true,force:true});}
+});
+
+test('an expired connection request stops with a clear message and saves nothing',async()=>{
+ const f=await fixture(1);const config=path.join(f.rec.dataDir,'publishing.json');await fs.rm(config);
+ try{
+  const fetch=async url=>url.endsWith('/api/pair/start')?Response.json({url:ORIGIN+'/connect-app#'+'d'.repeat(32),code:'AB2C-DE3F'}):Response.json({status:'expired'});
+  const publisher=new Publisher(f.rec,f.media,{fetch,openExternal:async()=>{},pairInterval:1});
+  publisher.publish(f.file,'Fixture');const {error}=await f.media.task;assert.match(error.message,/expired/);
+  await assert.rejects(fs.access(config));
+ }finally{await fs.rm(f.root,{recursive:true,force:true});}
+});
+
+test('a link to another site is never opened during connection',async()=>{
+ const f=await fixture(1);await fs.rm(path.join(f.rec.dataDir,'publishing.json'));
+ try{
+  const opened=[];const publisher=new Publisher(f.rec,f.media,{fetch:async()=>Response.json({url:'https://evil.example/connect-app#x',code:'AB2C-DE3F'}),openExternal:async u=>opened.push(u),pairInterval:1});
+  publisher.publish(f.file,'Fixture');const {error}=await f.media.task;assert.match(error.message,/Invalid connection/);assert.deepEqual(opened,[]);
+ }finally{await fs.rm(f.root,{recursive:true,force:true});}
+});

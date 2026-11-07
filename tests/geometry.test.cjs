@@ -2,7 +2,7 @@ const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const G=require('../ui/geometry.js');
 
-// Cameron's layout: 1920x1080 laptop at 1.5 scale beside a 3440x1440 display.
+// A real layout: 1920x1080 laptop at 1.5 scale beside a 3440x1440 display.
 const raw=[
   {name:'eDP-1',x:0,y:0,width:1920,height:1080,scale:1.5,transform:0,reserved:[0,26,0,0],activeWorkspace:{id:3},specialWorkspace:{id:0}},
   {name:'DP-7',x:1280,y:0,width:3440,height:1440,scale:1,transform:0,reserved:[0,26,0,0],activeWorkspace:{id:2},specialWorkspace:{id:0}},
@@ -104,4 +104,13 @@ test('full display recordings use another display, or fold to a corner dot when 
 
 test('launcher bar sits top center on the built-in display below its bar',()=>{
   assert.deepEqual(G.barPlacement(monitors[0],{width:392,height:52}),{x:444,y:38,width:392,height:52});
+});
+
+test('panel drops down under the bar near its icon and stays on screen',()=>{
+  const m={id:'DP-7',x:1280,y:0,width:3440,height:1440,reserved:{top:26,right:0,bottom:0,left:0}};
+  assert.deepEqual(G.panelPlacement(m,{width:360,height:600},3200),{x:1280+3200+24-360,y:32,width:360,height:600,monitor:'DP-7'});
+  assert.equal(G.panelPlacement(m,{width:360,height:600},3430).x,1280+3440-8-360);
+  assert.equal(G.panelPlacement(m,{width:360,height:600}).x,1280+3440-8-360);
+  assert.equal(G.panelPlacement(m,{width:360,height:600},10).x,1288);
+  assert.equal(G.panelPlacement({...m,height:500},{width:360,height:900}).height,500-26-12);
 });

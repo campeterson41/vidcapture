@@ -9,20 +9,25 @@
   const el = {
     targets: $('targets'),
     regionNote: $('region-note'),
+    sourceTools: $('source-tools'),
+    pickOnScreen: $('pick-on-screen'),
+    cameraOptions: $('camera-options'),
+    cameraIcon: $('camera-icon'),
+    micIcon: $('mic-icon'),
+    micLevel: $('mic-level'),
     microphone: $('microphone'),
     systemAudio: $('system-audio'),
     camera: $('camera'),
     cameraCorrection: $('camera-correction'),
     cameraProfileNote: $('camera-profile-note'),
     preview: $('preview'),
-    previewLabel: $('preview').querySelector('span'),
     refresh: $('refresh'),
     moreBody: $('more-body'),
     fieldsets: Array.from(document.querySelectorAll('fieldset[data-setting]')),
     openFolder: $('open-folder'),
+    location: $('location'),
     outputDir: $('output-dir'),
-    recent: $('recent'),
-    recentEmpty: $('recent-empty'),
+    changeFolder: $('change-folder'),
     time: $('time'),
     status: $('status'),
     openLast: $('open-last'),
@@ -61,28 +66,6 @@
     if (n < 1024 * 1024) return `${Math.max(1, Math.round(n / 1024))} KB`;
     if (n < 1024 ** 3) return `${(n / 1024 ** 2).toFixed(1)} MB`;
     return `${(n / 1024 ** 3).toFixed(2)} GB`;
-  }
-
-  function toDate(value) {
-    if (value == null || value === '') return null;
-    let d;
-    if (typeof value === 'number') d = new Date(value < 1e12 ? value * 1000 : value);
-    else d = new Date(value);
-    return Number.isNaN(d.getTime()) ? null : d;
-  }
-
-  function formatCreated(value) {
-    const d = toDate(value);
-    if (!d) return '';
-    const now = new Date();
-    const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-    if (d.toDateString() === now.toDateString()) return `Today, ${time}`;
-    const yesterday = new Date(now);
-    yesterday.setDate(now.getDate() - 1);
-    if (d.toDateString() === yesterday.toDateString()) return `Yesterday, ${time}`;
-    const opts = { month: 'short', day: 'numeric' };
-    if (d.getFullYear() !== now.getFullYear()) opts.year = 'numeric';
-    return `${d.toLocaleDateString('en-US', opts)}, ${time}`;
   }
 
   function shortenPath(path) {
@@ -183,67 +166,218 @@
 
   /* Rendering */
 
+  /* What to record: Full screen, Window or Area, with live thumbnails */
+
+  const src = { order: new Map(), data: null, loading: false, again: false, tab: null, at: 0, targetKey: undefined };
+  const SHOT_RATIO = 16 / 10;
+
+  function targetTab(t) {
+    if (!t) return 'screen';
+    return t.kind === 'window' ? 'window' : t.kind === 'region' ? 'area' : 'screen';
+  }
+  function targetKey(t) {
+    return t ? [t.kind, t.address || t.monitor || '', t.x, t.y, t.width, t.height].join(':') : '';
+  }
+  // com.mitchellh.ghostty -> Ghostty
+  function appName(cls) {
+    const last = String(cls || '').split('.').pop().replace(/[-_]+/g, ' ').trim();
+    return last ? last.charAt(0).toUpperCase() + last.slice(1) : 'Window';
+  }
+
+  // Thumbnails are taken fresh when the page shows, so they match the screen.
+  async function loadSources() {
+    if (!bridge || typeof bridge.sources !== 'function') return;
+    if (src.loading) { src.again = true; return; }
+    if (state && ACTIVE.has(state.phase)) return;
+    src.loading = true;
+    try {
+      const data = await bridge.sources();
+      // Windows keep the order they first appeared in, so cards never jump
+      // when focus changes between refreshes.
+      if (data && Array.isArray(data.windows)) {
+        for (const w of data.windows) if (!src.order.has(w.address)) src.order.set(w.address, src.order.size);
+        data.windows.sort((a, b) => src.order.get(a.address) - src.order.get(b.address));
+      }
+      src.data = data; src.at = Date.now();
+    }
+    catch { /* The page still works without thumbnails. */ }
+    finally {
+      src.loading = false;
+      render();
+      if (src.again) { src.again = false; loadSources(); }
+    }
+  }
+  let sourcesTimer = null;
+  function refreshSources(delay = 0) {
+    clearTimeout(sourcesTimer);
+    sourcesTimer = setTimeout(() => { if (ed.view === 'record' && !document.hidden) loadSources(); }, delay);
+  }
+
+  // Where the camera bubble lands, using the recorder's own sizing.
+  function bubbleStyle(width, height, settings) {
+    const margin = 16, size = settings.cameraSize || 'small';
+    const d = Math.max(32, Math.min(
+      Math.max({ small: 72, medium: 112, large: 160 }[size] || 72, Math.min(720, Math.round(Math.min(width, height) * ({ small: 0.22, medium: 0.34, large: 0.48 }[size] || 0.22)))),
+      width - margin * 2, height - margin * 2));
+    const side = settings.cameraCorner === 'bottom-left' ? 'left' : 'right';
+    return { width: `${(d / width) * 100}%`, [side]: `${(margin / width) * 100}%`, bottom: `${(margin / height) * 100}%` };
+  }
+
+  // A thumbnail card. The picture keeps the source's shape inside the frame,
+  // so the camera bubble sits where it will be in the recording.
+  function sourceCard({ name, meta, thumb, width, height, selected, fallback, label }, s) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'source-card';
+    b.setAttribute('aria-pressed', String(!!selected));
+    if (label) b.setAttribute('aria-label', label);
+    const shot = span('shot');
+    const box = span('shot-box');
+    const ratio = width > 0 && height > 0 ? width / height : SHOT_RATIO;
+    if (ratio >= SHOT_RATIO) { box.style.width = '100%'; box.style.height = `${(SHOT_RATIO / ratio) * 100}%`; }
+    else { box.style.height = '100%'; box.style.width = `${(ratio / SHOT_RATIO) * 100}%`; }
+    if (thumb) {
+      const img = document.createElement('img');
+      img.src = thumb; img.alt = ''; img.draggable = false;
+      box.appendChild(img);
+    } else {
+      box.classList.add('is-empty');
+      if (typeof fallback === 'string') box.appendChild(span('initial', fallback));
+      else box.appendChild(fallback || icon('i-desktop'));
+    }
+    const camera = s.settings && s.settings.camera && s.settings.camera !== 'none';
+    if (selected && camera && width > 90 && height > 90) {
+      const bubble = span('cam-bubble');
+      Object.assign(bubble.style, bubbleStyle(width, height, s.settings));
+      bubble.appendChild(icon('i-camera'));
+      box.appendChild(bubble);
+    }
+    shot.appendChild(box);
+    if (selected) shot.appendChild(icon('i-check', 'badge'));
+    b.appendChild(shot);
+    const text = span('card-label');
+    text.appendChild(span('card-name', name));
+    if (meta) text.appendChild(span('card-meta', meta));
+    b.appendChild(text);
+    b.title = name;
+    return b;
+  }
+
   function renderTargets(s, locked) {
     const target = s.target;
-    const monitors = (s.devices && Array.isArray(s.devices.monitors)) ? s.devices.monitors : [];
-        const waiting = s.phase === 'selecting' || pending === 'target-region';
+    const key = targetKey(target);
+    // A choice made anywhere (panel, picker, this page) brings its tab forward.
+    if (key !== src.targetKey) {
+      const first = src.targetKey === undefined;
+      src.targetKey = key;
+      if (target) src.tab = targetTab(target);
+      if (!first && target && target.kind === 'region') refreshSources();
+    }
+    const tab = src.tab || targetTab(target);
+    const waiting = s.phase === 'selecting' || pending === 'target-region';
+    const devMonitors = (s.devices && Array.isArray(s.devices.monitors)) ? s.devices.monitors : [];
+    const data = src.data || {};
+
+    for (const b of document.querySelectorAll('.source-tabs [role="tab"]')) {
+      const on = b.dataset.tab === tab;
+      b.setAttribute('aria-selected', String(on));
+      b.tabIndex = on ? 0 : -1;
+      b.disabled = locked;
+    }
+    el.targets.setAttribute('aria-labelledby', `tab-${tab}`);
+    el.sourceTools.hidden = tab !== 'window';
+    el.pickOnScreen.disabled = locked;
 
     const model = {
-      monitors: monitors.map((m) => [m.id, m.name, m.width, m.height]),
-      target: target ? [target.kind, target.label, target.x, target.y, target.width, target.height, target.monitor, target.available] : null,
-      waiting,
+      tab, key, at: src.at, loading: src.loading && !src.data, waiting,
+      available: target ? target.available : null, label: target ? target.label : null,
+      cam: [s.settings?.camera !== 'none', s.settings?.cameraSize, s.settings?.cameraCorner],
+      monitors: devMonitors.map((m) => [m.id, m.name, m.width, m.height, m.pixelWidth, m.pixelHeight]),
     };
 
     if (changed('targets', model)) {
-      el.targets.textContent = '';
-
-      for (const kind of ['window', 'region']) {
-        const selected = !!target && target.kind === kind;
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'target';
-        button.dataset.target = kind;
-        button.setAttribute('aria-pressed', String(selected));
-        button.appendChild(icon(kind === 'window' ? 'i-desktop' : 'i-marquee'));
-        const text = span('target-text');
-        text.appendChild(span('target-name', kind === 'window' ? 'Window' : 'Area'));
-        const hint = selected ? target.label : kind === 'window' ? 'Choose a window to follow' : 'Drag a fixed recording area';
-        text.appendChild(span('target-sub', hint));
-        button.title = selected ? target.label : hint;
-        button.appendChild(text);
-        button.appendChild(span('target-end', selected ? 'Change' : ''));
-        button.setAttribute('aria-label', selected ? `${kind === 'window' ? 'Window' : 'Area'}, selected: ${target.label}. Choose again` : hint);
-        el.targets.appendChild(button);
+      const cards = [];
+      if (tab === 'screen') {
+        const thumbs = new Map((data.monitors || []).map((m) => [m.id, m.thumb]));
+        for (const m of devMonitors) {
+          const selected = !!target && target.kind === 'monitor' && (target.monitor === m.id || (target.monitor == null && target.label === m.name));
+          const size = dims(m.pixelWidth || m.width, m.pixelHeight || m.height);
+          const card = sourceCard({ name: m.name || String(m.id), meta: size, thumb: thumbs.get(m.id), width: m.width, height: m.height, selected,
+            label: `Full display ${m.name || m.id}${size ? `, ${size}` : ''}` }, s);
+          card.dataset.monitorId = String(m.id);
+          cards.push(card);
+        }
+        if (!cards.length) cards.push(span('empty', 'No displays found.'));
+      } else if (tab === 'window') {
+        const list = (data.windows || []).slice();
+        if (target && target.kind === 'window' && !list.some((w) => w.address === target.address)) {
+          list.unshift({ address: target.address, title: target.label, app: '', visible: true, width: target.width, height: target.height });
+        }
+        for (const w of list) {
+          const selected = !!target && target.kind === 'window' && target.address === w.address;
+          const title = String(w.title || '').replace(/^[^\p{L}\p{N}]+/u, '') || w.title || 'Window';
+          const app = w.app ? appName(w.app) : '';
+          const meta = selected && target.available === false ? 'No longer visible'
+            : w.visible === false ? `${app || 'Window'}, workspace ${w.workspace}` : app;
+          const card = sourceCard({ name: title, meta, thumb: w.thumb, width: w.width, height: w.height, selected,
+            fallback: (app || title).replace(/^[^a-z0-9]+/i, '').charAt(0).toUpperCase() || '?',
+            label: `${title}${meta ? `, ${meta}` : ''}` }, s);
+          card.dataset.address = w.address;
+          cards.push(card);
+        }
+        if (!cards.length) cards.push(span('empty', src.data ? 'No open windows. Open the app you want to record, then come back.' : 'Looking for windows'));
+      } else {
+        const area = target && target.kind === 'region' ? target : null;
+        const size = area && dims(area.pixelWidth || area.width, area.pixelHeight || area.height);
+        const card = sourceCard(area
+          ? { name: waiting ? 'Drawing an area' : 'Area', meta: size, thumb: data.area, width: area.width, height: area.height, selected: true, fallback: icon('i-marquee'), label: `Area ${size}. Draw a different area` }
+          : { name: waiting ? 'Drawing an area' : 'Draw an area on screen', meta: 'Drag across the part of the screen to record', width: 16, height: 9, fallback: icon('i-marquee') }, s);
+        card.dataset.draw = '1';
+        card.classList.add('is-area');
+        cards.push(card);
+        if (area) {
+          const again = document.createElement('button');
+          again.type = 'button';
+          again.className = 'btn btn-plain draw-again';
+          again.dataset.draw = '1';
+          again.appendChild(icon('i-marquee'));
+          again.appendChild(span('', 'Draw a different area'));
+          cards.push(again);
+        }
       }
+      el.targets.dataset.tab = tab;
+      el.targets.classList.toggle('single', tab === 'screen' && devMonitors.length < 2);
+      el.targets.replaceChildren(...cards);
 
-      for (const m of monitors) {
-        const selected = !!target && target.kind === 'monitor' &&
-          (target.monitor === m.id || (target.monitor == null && target.label === m.name));
-        const b = document.createElement('button');
-        b.type = 'button';
-        b.className = 'target';
-        b.dataset.target = 'monitor';
-        b.dataset.monitorId = String(m.id);
-        b.setAttribute('aria-pressed', String(selected));
-        b.appendChild(icon('i-desktop'));
-        const t = span('target-text');
-        t.appendChild(span('target-name', m.name || String(m.id)));
-        t.appendChild(span('target-sub mono', dims(m.width, m.height)));
-        b.appendChild(t);
-        const end = span('target-end');
-        if (selected) end.appendChild(icon('i-check'));
-        b.appendChild(end);
-        b.setAttribute('aria-label', `Full display ${m.name || m.id}${dims(m.width, m.height) ? `, ${dims(m.width, m.height)}` : ''}`);
-        el.targets.appendChild(b);
-      }
-
-      el.regionNote.hidden = !target || target.kind === 'monitor';
+      el.regionNote.hidden = !target || targetTab(target) !== tab || target.kind === 'monitor';
       el.regionNote.textContent = target?.kind === 'window'
-        ? (target.available === false ? 'This window is no longer visible. Choose it again before recording.' : 'The highlighted window and camera follow moves and resizes. Keep it visible on this display; moving to another display ends the take.')
+        ? (target.available === false ? 'This window is no longer visible. Choose it again before recording.' : 'The recording and camera follow this window as it moves. Keep it on this display.')
         : 'This area stays fixed when windows move.';
     }
 
     for (const b of el.targets.querySelectorAll('button')) b.disabled = locked;
+  }
+
+  // Switching tabs brings back that tab's last choice, as in the panel.
+  function chooseTab(tab) {
+    if (!state || pending) return;
+    src.tab = tab;
+    signatures.targets = null;
+    const t = state.target;
+    if (targetTab(t) !== tab) {
+      const memo = (src.data && src.data.memo) || {};
+      const m = memo[tab];
+      if (tab === 'screen') {
+        const ms = (state.devices && state.devices.monitors) || [];
+        const pick = (m && ms.find((x) => x.id === m.monitor)) || ms.find((x) => /^eDP/.test(x.id)) || ms[0];
+        if (pick) run('target', () => bridge.chooseTarget(pick.id));
+      } else if (tab === 'window' && m && ((src.data && src.data.windows) || []).some((w) => w.address === m.address && w.visible)) {
+        run('target', () => bridge.chooseSource({ kind: 'window', address: m.address }));
+      } else if (tab === 'area' && m) {
+        run('target', () => bridge.chooseSource({ kind: 'region', x: m.x, y: m.y, width: m.width, height: m.height }));
+      }
+    }
+    render();
   }
 
   function fillSelect(select, key, options, value) {
@@ -268,13 +402,15 @@
     const devices = s.devices || {};
 
     const mics = Array.isArray(devices.microphones) ? devices.microphones : [];
-    const micOptions = [{ value: 'none', label: 'None' }];
-    if (!mics.some((d) => d.id === 'default_input')) micOptions.push({ value: 'default_input', label: 'Default input' });
+    // Same names and order as the record panel.
+    const micOptions = [];
+    if (!mics.some((d) => d.id === 'default_input')) micOptions.push({ value: 'default_input', label: 'Default microphone' });
     for (const d of mics) micOptions.push({ value: String(d.id), label: d.name || String(d.id) });
+    micOptions.push({ value: 'none', label: 'No microphone' });
     fillSelect(el.microphone, 'mics', micOptions, settings.microphone ?? 'none');
 
     const cams = Array.isArray(devices.cameras) ? devices.cameras : [];
-    const camOptions = [{ value: 'none', label: 'None' }];
+    const camOptions = [{ value: 'none', label: 'No camera' }];
     for (const d of cams) camOptions.push({ value: String(d.id), label: d.name || String(d.id) });
     fillSelect(el.camera, 'cams', camOptions, settings.camera ?? 'none');
 
@@ -285,75 +421,92 @@
     el.systemAudio.disabled = locked;
 
     const hasCamera = settings.camera && settings.camera !== 'none';
-    const razer = /Razer Kiyo Pro Ultra/i.test(cams.find(c => c.id === settings.camera)?.name || '');
-    el.cameraCorrection.hidden = !razer;
-    el.cameraProfileNote.hidden = !razer;
-    el.cameraProfileNote.textContent = settings.cameraCorrection === 'computer'
-      ? 'Razer 4K at 30 fps. Lens correction runs on your computer; camera HDR stays off.'
-      : 'Razer 4K at 30 fps. Lens correction and camera HDR stay off.';
+    // A camera profile (camera-profiles/) adds a note and, when it has one, lens correction.
+    const profile = hasCamera ? (cams.find(c => c.id === settings.camera) || {}).profile || null : null;
+    el.cameraCorrection.hidden = !(profile && profile.lensCorrection);
+    el.cameraProfileNote.hidden = !(profile && profile.note);
+    el.cameraProfileNote.textContent = profile && profile.note ? `${profile.name}: ${profile.note}` : '';
+    el.cameraOptions.hidden = !hasCamera;
+    el.cameraIcon.querySelector('use').setAttribute('href', hasCamera ? '#i-camera' : '#i-camera-off');
+    el.camera.closest('.select-wrap').classList.toggle('off', !hasCamera);
+    const hasMic = settings.microphone && settings.microphone !== 'none';
+    el.micIcon.querySelector('use').setAttribute('href', hasMic ? '#i-mic' : '#i-mic-off');
+    el.microphone.closest('.select-wrap').classList.toggle('off', !hasMic);
+    el.preview.hidden = !hasCamera;
     el.preview.disabled = locked || !hasCamera;
     el.preview.setAttribute('aria-pressed', String(!!s.cameraPreview));
-    el.previewLabel.textContent = s.cameraPreview ? 'Hide preview' : 'Preview';
+    el.preview.title = s.cameraPreview ? 'Hide camera' : 'Show camera';
+    el.preview.setAttribute('aria-label', el.preview.title);
     el.preview.setAttribute('aria-busy', String(pending === 'preview'));
 
     el.refresh.disabled = locked;
     el.refresh.classList.toggle('is-busy', pending === 'refresh');
     el.refresh.setAttribute('aria-busy', String(pending === 'refresh'));
-    el.refresh.querySelector('span').textContent = pending === 'refresh' ? 'Refreshing' : 'Refresh devices';
+    el.refresh.title = pending === 'refresh' ? 'Refreshing devices' : 'Refresh microphones and cameras';
 
     for (const fs of el.fieldsets) {
       const key = fs.dataset.setting;
       const value = settings[key] == null ? '' : String(settings[key]);
       for (const input of fs.querySelectorAll('input')) input.checked = input.value === value;
-      fs.disabled = locked || (['cameraCorrection','cameraLighting'].includes(key) && !hasCamera);
+      const noMic = !settings.microphone || settings.microphone === 'none';
+      const cleanup = settings.micNoise === 'on' || settings.micRumble === true;
+      fs.disabled = locked || (['cameraCorrection','cameraLighting'].includes(key) && !hasCamera)
+        || (['micNoise','micGate','micRumble','micBackup'].includes(key) && noMic)
+        || (key === 'micGate' && settings.micNoise !== 'on')
+        || (key === 'micBackup' && !cleanup)
+        || (['cameraBackground','cameraBlur'].includes(key) && !hasCamera);
     }
+    renderStudio(locked);
   }
 
   function renderRecordings(s, locked) {
     const dir = s.outputDir || '';
     // Marks keep the path left to right while the container truncates from the start.
     el.outputDir.textContent = dir ? `\u200e${shortenPath(dir)}\u200e` : 'Recordings folder';
+    el.location.hidden = ACTIVE.has(s.phase) || s.phase === 'saved';
     el.openFolder.title = dir ? `Open ${dir}` : 'Open folder';
     el.openFolder.setAttribute('aria-label', dir ? `Open recordings folder, ${dir}` : 'Open recordings folder');
     el.openFolder.disabled = !bridge;
 
-    const recent = Array.isArray(s.recent) ? s.recent : [];
-    const fresh = s.phase === 'saved' ? s.lastFile : null;
-    if (changed('recent', { recent, fresh, day: new Date().toDateString() })) {
-      el.recent.textContent = '';
-      for (const r of recent) {
-        const li = document.createElement('li');
-        const b = document.createElement('button');
-        b.type = 'button';
-        b.className = 'recent-item';
-        b.dataset.path = r.path;
-        if (fresh && r.path === fresh) b.classList.add('is-new');
-        const name = r.name || baseName(r.path);
-        b.appendChild(span('recent-name', name));
-        b.appendChild(span('recent-size', formatBytes(r.bytes)));
-        b.appendChild(span('recent-date', formatCreated(r.created)));
-        b.title = r.path;
-        b.setAttribute('aria-label', `Open ${name}`);
-        li.appendChild(b);
-        const editBtn = document.createElement('button');
-        editBtn.type = 'button';
-        editBtn.className = 'btn row-edit';
-        editBtn.dataset.edit = r.path;
-        editBtn.textContent = 'Edit';
-        editBtn.setAttribute('aria-label', `Edit ${name}`);
-        li.appendChild(editBtn);
-        el.recent.appendChild(li);
-      }
-      el.recent.hidden = recent.length === 0;
-      el.recentEmpty.hidden = recent.length !== 0;
-    }
-    for (const b of el.recent.querySelectorAll('button.recent-item')) b.disabled = !bridge;
-    for (const b of el.recent.querySelectorAll('button.row-edit')) b.disabled = !bridge || ACTIVE.has(s.phase);
+    // Past recordings live in the Library tab; this only sets where new ones go.
+    el.changeFolder.disabled = !bridge || typeof bridge.chooseOutputDir !== 'function' || locked || !!s.job?.running;
+  }
+
+  // The microphone meter runs only while this page is in view and idle.
+  let levelOn = false;
+  function syncLevel(s) {
+    const mic = s && s.settings && s.settings.microphone;
+    const want = !!bridge && typeof bridge.watchLevel === 'function' && ed.view === 'record' && !document.hidden &&
+      !!s && !ACTIVE.has(s.phase) && !!mic && mic !== 'none';
+    if (want === levelOn) return;
+    levelOn = want;
+    if (!want) el.micLevel.hidden = true;
+    bridge.watchLevel(want).catch(() => {});
+  }
+  if (bridge && typeof bridge.onLevel === 'function') {
+    bridge.onLevel((v) => {
+      const show = levelOn && typeof v === 'number' && v >= 0;
+      el.micLevel.hidden = !show;
+      if (show) el.micLevel.firstElementChild.style.transform = `scaleX(${Math.max(0, Math.min(1, v))})`;
+    });
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (state) syncLevel(state);
+    if (!document.hidden) refreshSources(150);
+  });
+  window.addEventListener('focus', () => { if (!src.data || Date.now() - src.at > 4000) refreshSources(250); });
+
+  // A recording's AI title when it has one, else its file name.
+  function titleOf(file) {
+    if (!file) return '';
+    const r = (state && Array.isArray(state.recent) ? state.recent : []).find((x) => x.path === file);
+    return (r && r.title) || baseName(file).replace(/\.(mp4|mkv)$/i, '');
   }
 
   function renderTransport(s) {
     const phase = s.phase;
-    const hasTarget = !!s.target && s.target.available !== false;
+    const shownTab = src.tab || targetTab(s.target);
+    const hasTarget = !!s.target && s.target.available !== false && targetTab(s.target) === shownTab;
 
     el.time.textContent = formatElapsed(s.elapsed);
 
@@ -364,12 +517,14 @@
       case 'recording': status = 'Recording'; break;
       case 'paused': status = 'Paused'; break;
       case 'stopping': status = 'Saving the file'; break;
-      case 'saved': status = s.lastFile ? `Saved ${baseName(s.lastFile)}` : 'Saved'; break;
+      case 'saved': status = s.lastFile ? `Saved ${titleOf(s.lastFile)}` : 'Saved'; break;
       case 'error': status = 'Not recording'; break;
-      default: status = hasTarget ? (s.target.kind === 'window' ? `Ready: ${s.target.label}` : 'Ready') : 'Choose a source to start';
+      default: status = hasTarget ? 'Ready' : shownTab === 'window' ? 'Choose a window to record' : shownTab === 'area' ? 'Draw an area to record' : 'Choose a display to record';
     }
     if (pending === 'start' && phase !== 'starting' && !ACTIVE.has(phase)) status = 'Starting';
     if (el.status.textContent !== status) el.status.textContent = status;
+    // While idle, the footer shows where files go; a hint only when Start is blocked.
+    el.status.parentElement.hidden = (phase === 'idle' || phase === 'error') && hasTarget && pending !== 'start';
     el.status.title = phase === 'saved' && s.lastFile ? s.lastFile : '';
 
     const live = phase === 'recording' || phase === 'paused';
@@ -387,7 +542,7 @@
     el.primary.disabled = !bridge || busyPrimary || phase === 'selecting' || (!!pending && pending !== 'pause') ||
       (!live && (!hasTarget || processing));
     el.primary.title = !live && processing ? 'Wait for processing to finish'
-      : (!live && !hasTarget ? 'Choose a source first' : '');
+      : (!live && !hasTarget ? status : '');
 
     el.pause.hidden = !live;
     el.pause.disabled = !!pending;
@@ -425,52 +580,43 @@
     document.body.dataset.phase = phase;
     const locked = !bridge || ACTIVE.has(phase) || !!pending;
     renderTargets(state, locked);
-    $('open-bar').disabled = locked || !!(state.job && state.job.running);
     renderInputs(state, locked);
     renderRecordings(state, locked);
     renderTransport(state);
     renderAlert(state);
+    syncLevel(state);
     renderJob(state);
     renderView(state);
+    renderLibrary(state);
     renderEditorControls();
   }
 
   /* Events */
 
   el.targets.addEventListener('click', (e) => {
-    const b = e.target.closest('button.target');
+    const b = e.target.closest('button');
     if (!b || b.disabled) return;
-    if (b.dataset.target === 'window') showWindowPicker();
-    else if (b.dataset.target === 'region') run('target-region', () => bridge.pickOnScreen('area'));
-    else run('target', () => bridge.chooseTarget(b.dataset.monitorId));
+    if (b.dataset.draw) run('target-region', () => bridge.pickOnScreen('area'));
+    else if (b.dataset.address) run('target', () => bridge.chooseSource({ kind: 'window', address: b.dataset.address }));
+    else if (b.dataset.monitorId) run('target', () => bridge.chooseTarget(b.dataset.monitorId));
   });
-
-  const picker = $('window-picker');
-  const windowList = $('window-list');
-  $('window-picker-close').addEventListener('click', () => picker.close());
-  $('window-picker-screen').addEventListener('click', () => { picker.close(); run('target-region', () => bridge.pickOnScreen('window')); });
-  $('open-bar').addEventListener('click', () => run('open-bar', () => bridge.openBar()));
-  async function showWindowPicker() {
-    try {
-      const windows = await bridge.listWindows();
-      windowList.replaceChildren();
-      if (!windows.length) windowList.appendChild(span('note', 'No visible windows. Open the app you want to record, then try again.'));
-      for (const item of windows) {
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.dataset.windowId = item.id;
-        button.title = item.title;
-        button.appendChild(span('window-title', item.title));
-        button.appendChild(span('window-app', item.app));
-        button.addEventListener('click', () => {
-          picker.close();
-          run('target-region', () => bridge.chooseTarget(`window:${item.id}`));
-        });
-        windowList.appendChild(button);
-      }
-      picker.showModal();
-    } catch (err) { fail(err); render(); }
-  }
+  for (const b of document.querySelectorAll('.source-tabs [role="tab"]')) b.addEventListener('click', () => chooseTab(b.dataset.tab));
+  // Arrow keys move between tabs, as tab lists do.
+  $('content').querySelector('.source-tabs').addEventListener('keydown', (e) => {
+    const tabs = Array.from(document.querySelectorAll('.source-tabs [role="tab"]'));
+    const i = tabs.indexOf(document.activeElement);
+    if (i < 0) return;
+    let n = null;
+    if (e.key === 'ArrowRight') n = (i + 1) % tabs.length;
+    else if (e.key === 'ArrowLeft') n = (i - 1 + tabs.length) % tabs.length;
+    else if (e.key === 'Home') n = 0;
+    else if (e.key === 'End') n = tabs.length - 1;
+    if (n == null) return;
+    e.preventDefault();
+    tabs[n].focus();
+    chooseTab(tabs[n].dataset.tab);
+  });
+  el.pickOnScreen.addEventListener('click', () => run('target-region', () => bridge.pickOnScreen('window')));
 
   el.microphone.addEventListener('change', () => saveSetting({ microphone: el.microphone.value }));
   el.camera.addEventListener('change', () => saveSetting({ camera: el.camera.value }));
@@ -479,12 +625,221 @@
     saveSetting({ systemAudio: !(state.settings && state.settings.systemAudio) });
   });
 
+  /* Studio settings: camera controls and mic level */
+
+  const ST = {
+    controls: document.getElementById('camera-controls'),
+    controlsNote: document.getElementById('camera-controls-note'),
+    resetRow: document.getElementById('camera-reset-row'),
+    reset: document.getElementById('camera-reset'),
+    gainRow: document.getElementById('mic-gain-row'),
+    gain: document.getElementById('mic-gain'),
+    gainValue: document.getElementById('mic-gain-value'),
+    micError: document.getElementById('mic-cleanup-error'),
+    blur: document.getElementById('camera-blur'),
+    backgrounds: document.getElementById('backgrounds'),
+    backgroundList: document.getElementById('background-list'),
+    backgroundAdd: document.getElementById('background-add'),
+    effectsNote: document.getElementById('effects-note'),
+    info: null, sig: null, loading: false, timers: new Map(), editing: new Set(), locked: false,
+  };
+  const SECTION_NAMES = { exposure: 'Exposure', color: 'Color', framing: 'Focus and framing', other: 'Other' };
+
+  async function loadStudio() {
+    if (!bridge || typeof bridge.studioInfo !== 'function') return;
+    ST.loading = true;
+    try { ST.info = await bridge.studioInfo(); } catch (err) { ST.info = { camera: { error: err.message } }; }
+    ST.loading = false;
+    renderStudio(ST.locked, true);
+  }
+
+  // Sends one control change after the slider rests briefly, then shows the camera's answer.
+  function sendControl(name, value) {
+    clearTimeout(ST.timers.get(name));
+    ST.editing.add(name);
+    ST.timers.set(name, setTimeout(async () => {
+      ST.timers.delete(name);
+      try { ST.info = await bridge.setCameraControl(name, value); }
+      catch (err) { fail(err); }
+      ST.editing.delete(name);
+      renderStudio(ST.locked, true);
+    }, 140));
+  }
+
+  function controlRow(c) {
+    const row = document.createElement('div');
+    row.className = 'control-row';
+    row.dataset.control = c.name;
+    const id = `cam-${c.name}`;
+    const label = document.createElement(c.type === 'menu' ? 'span' : 'label');
+    label.textContent = c.label;
+    if (c.type !== 'menu') label.htmlFor = id;
+    else label.id = id + '-label';
+    row.append(label);
+    if (c.type === 'bool') {
+      const sw = document.createElement('button');
+      sw.type = 'button'; sw.className = 'switch'; sw.id = id; sw.setAttribute('role', 'switch');
+      sw.innerHTML = '<span class="switch-thumb"></span>';
+      sw.addEventListener('click', () => {
+        const next = sw.getAttribute('aria-checked') === 'true' ? 0 : 1;
+        sw.setAttribute('aria-checked', String(next === 1));
+        sendControl(c.name, next);
+      });
+      const wrap = document.createElement('div'); wrap.className = 'switch-wrap'; wrap.append(sw);
+      row.append(wrap);
+    } else if (c.type === 'menu') {
+      const seg = document.createElement('div');
+      seg.className = 'seg'; seg.setAttribute('role', 'radiogroup'); seg.setAttribute('aria-labelledby', id + '-label');
+      for (const o of c.options) {
+        const l = document.createElement('label');
+        const input = document.createElement('input');
+        input.type = 'radio'; input.name = id; input.value = String(o.value);
+        input.addEventListener('change', () => sendControl(c.name, o.value));
+        const span = document.createElement('span'); span.textContent = o.label;
+        l.append(input, span); seg.append(l);
+      }
+      row.append(seg);
+    } else {
+      const wrap = document.createElement('div'); wrap.className = 'range-wrap';
+      const input = document.createElement('input');
+      input.type = 'range'; input.id = id; input.min = c.min; input.max = c.max; input.step = c.step;
+      const out = document.createElement('output'); out.htmlFor = id;
+      input.addEventListener('input', () => { out.textContent = input.value + (c.unit ? ' ' + c.unit : ''); sendControl(c.name, Number(input.value)); });
+      input.addEventListener('dblclick', () => { if (Number.isFinite(c.default)) { input.value = c.default; input.dispatchEvent(new Event('input')); } });
+      input.title = Number.isFinite(c.default) ? `Double-click to reset to ${c.default}` : '';
+      wrap.append(input, out); row.append(wrap);
+    }
+    return row;
+  }
+
+  function updateRow(row, c, locked) {
+    const off = locked || c.inactive;
+    row.classList.toggle('is-inactive', !!c.inactive);
+    if (ST.editing.has(c.name)) return;
+    if (c.type === 'bool') { const sw = row.querySelector('.switch'); sw.setAttribute('aria-checked', String(c.value === 1)); sw.disabled = off; }
+    else if (c.type === 'menu') { for (const input of row.querySelectorAll('input')) { input.checked = Number(input.value) === c.value; input.disabled = off; } }
+    else { const input = row.querySelector('input'); input.value = c.value; input.disabled = off; row.querySelector('output').textContent = c.value + (c.unit ? ' ' + c.unit : ''); }
+  }
+
+  function renderStudio(locked, fromLoad) {
+    ST.locked = locked;
+    if (!state || !state.settings) return;
+    const s = state.settings;
+    const sig = [s.camera, s.microphone, s.micNoise, s.micGate, s.micRumble, state.phase === 'idle' || state.phase === 'saved' || state.phase === 'error'].join('|');
+    if (sig !== ST.sig && !fromLoad) { ST.sig = sig; loadStudio(); }
+    const info = ST.info || {};
+
+    // Mic level and cleanup status.
+    const mic = info.mic && !info.mic.error ? info.mic : null;
+    ST.gainRow.hidden = !mic || s.microphone === 'none';
+    if (mic && !ST.editing.has('mic-gain')) { ST.gain.value = mic.percent; ST.gainValue.textContent = mic.percent + '%'; }
+    ST.gain.disabled = locked;
+    const cleanupError = info.cleanup && info.cleanup.error;
+    ST.micError.hidden = !cleanupError;
+    ST.micError.textContent = cleanupError || '';
+
+    // Background blur and replacement.
+    const fx = info.effects || { available: false, backgrounds: [] };
+    const noCam = !s.camera || s.camera === 'none';
+    ST.blur.hidden = s.cameraBackground !== 'blur';
+    ST.backgrounds.hidden = s.cameraBackground !== 'image';
+    ST.effectsNote.hidden = !(ST.info && !fx.available && !noCam);
+    ST.backgroundAdd.disabled = locked;
+    const names = fx.backgrounds || [];
+    const bgKey = names.join('\n');
+    if (ST.backgroundList.dataset.key !== bgKey) {
+      ST.backgroundList.dataset.key = bgKey;
+      ST.backgroundList.replaceChildren(...names.map((name) => {
+        const item = document.createElement('div');
+        item.className = 'background-item';
+        const pick = document.createElement('button');
+        pick.type = 'button'; pick.className = 'background-pick'; pick.dataset.name = name;
+        pick.setAttribute('role', 'radio'); pick.title = name;
+        const img = document.createElement('img');
+        img.alt = name; img.loading = 'lazy'; img.src = 'capture-media://background/' + encodeURIComponent(name);
+        pick.append(img);
+        pick.addEventListener('click', () => saveSetting({ cameraBackground: 'image', cameraBackgroundImage: name }));
+        const remove = document.createElement('button');
+        remove.type = 'button'; remove.className = 'icon-btn background-remove';
+        remove.setAttribute('aria-label', 'Remove ' + name); remove.title = 'Remove';
+        remove.innerHTML = '<svg class="icon" aria-hidden="true"><use href="#i-x"/></svg>';
+        remove.addEventListener('click', async () => {
+          try { ST.info = await bridge.removeBackground(name); } catch (err) { fail(err); }
+          renderStudio(ST.locked, true);
+        });
+        item.append(pick, remove);
+        return item;
+      }));
+    }
+    for (const pick of ST.backgroundList.querySelectorAll('.background-pick')) {
+      const on = pick.dataset.name === s.cameraBackgroundImage;
+      pick.setAttribute('aria-checked', String(on));
+      pick.disabled = locked;
+    }
+    for (const btn of ST.backgroundList.querySelectorAll('.background-remove')) btn.disabled = locked;
+
+    // Camera controls, grouped by section.
+    const cam = info.camera;
+    const controls = cam && Array.isArray(cam.controls) ? cam.controls : [];
+    ST.resetRow.hidden = !controls.length;
+    ST.reset.disabled = locked;
+    if (s.camera === 'none') { ST.controls.replaceChildren(); ST.controlsNote.hidden = true; ST.controls.dataset.key = ''; return; }
+    if (cam && cam.error) { ST.controls.replaceChildren(); ST.controlsNote.hidden = false; ST.controlsNote.textContent = 'Camera settings could not be read. ' + cam.error; return; }
+    const key = (cam && cam.key || '') + ':' + controls.map((c) => c.name).join(',');
+    if (ST.controls.dataset.key !== key) {
+      ST.controls.dataset.key = key;
+      const parts = [];
+      let section = null;
+      for (const c of controls) {
+        if (c.section !== section) {
+          section = c.section;
+          const h = document.createElement('h4'); h.className = 'control-section'; h.textContent = SECTION_NAMES[section] || 'Other';
+          parts.push(h);
+        }
+        parts.push(controlRow(c));
+      }
+      ST.controls.replaceChildren(...parts);
+    }
+    for (const c of controls) { const row = ST.controls.querySelector(`[data-control="${c.name}"]`); if (row) updateRow(row, c, locked); }
+    // Profile lens correction is measured at fixed values (for example zoom and focus).
+    const profile = ((state && state.devices && state.devices.cameras) || []).find((c) => c.id === s.camera)?.profile;
+    const fitted = profile && profile.lensCorrection && s.cameraCorrection === 'computer' ? Object.entries(profile.fittedAt || {}) : [];
+    const drift = fitted.filter(([name, value]) => { const c = controls.find((x) => x.name === name); return c && c.value !== value; });
+    ST.controlsNote.hidden = !drift.length;
+    ST.controlsNote.textContent = drift.length
+      ? `Lens correction is matched to ${fitted.map(([name, value]) => `${(controls.find((x) => x.name === name)?.label || name).toLowerCase()} ${value}`).join(' and ')}. Other values may bend straight lines slightly.`
+      : '';
+  }
+
+  ST.gain.addEventListener('input', () => {
+    ST.gainValue.textContent = ST.gain.value + '%';
+    ST.editing.add('mic-gain');
+    clearTimeout(ST.timers.get('mic-gain'));
+    ST.timers.set('mic-gain', setTimeout(async () => {
+      ST.timers.delete('mic-gain');
+      try { ST.info = await bridge.setMicLevel(Number(ST.gain.value)); } catch (err) { fail(err); }
+      ST.editing.delete('mic-gain');
+      renderStudio(ST.locked, true);
+    }, 140));
+  });
+  ST.backgroundAdd.addEventListener('click', async () => {
+    ST.backgroundAdd.disabled = true;
+    try { ST.info = await bridge.addBackground(); } catch (err) { fail(err); }
+    renderStudio(ST.locked, true);
+  });
+  ST.reset.addEventListener('click', async () => {
+    ST.reset.disabled = true;
+    try { ST.info = await bridge.resetCameraControls(); } catch (err) { fail(err); }
+    renderStudio(ST.locked, true);
+  });
+
   for (const fs of el.fieldsets) {
     fs.addEventListener('change', (e) => {
       const input = e.target;
       if (!input || input.type !== 'radio') return;
       const key = fs.dataset.setting;
-      const value = key === 'fps' ? Number(input.value) : input.value;
+      const raw = input.value;
+      const value = key === 'fps' ? Number(raw) : raw === 'true' ? true : raw === 'false' ? false : raw;
       saveSetting({ [key]: value });
     });
   }
@@ -512,13 +867,12 @@
   }
 
   el.openLast.addEventListener('click', () => { if (state) openPath(state.lastFile); });
-  el.recent.addEventListener('click', (e) => {
-    const edit = e.target.closest('button.row-edit');
-    if (edit) { if (!edit.disabled) openEditor(edit.dataset.edit); return; }
-    const b = e.target.closest('button.recent-item');
-    if (b && !b.disabled) openPath(b.dataset.path);
-  });
   el.editLast.addEventListener('click', () => { if (state && state.lastFile) openEditor(state.lastFile); });
+
+  el.changeFolder.addEventListener('click', async () => {
+    if (!bridge || typeof bridge.chooseOutputDir !== 'function') return;
+    try { await bridge.chooseOutputDir(); } catch (err) { localError = errorMessage(err); dismissedError = null; render(); }
+  });
 
   el.openFolder.addEventListener('click', async () => {
     if (!bridge) return;
@@ -708,6 +1062,7 @@
     }
     setView('edit');
     if (ed.session && ed.session.path === path) return;
+    ed.notice = null;
 
     const token = ++ed.loadToken;
     if (ed.session) flushSave(ed.session);
@@ -723,6 +1078,11 @@
     try {
       const media = await bridge.getMedia(path);
       if (token !== ed.loadToken) return;
+      if (media && media.editedFrom && media.editedFrom !== path) {
+        // A saved version is a finished render; keep editing its project instead.
+        ed.loadingPath = null;
+        return openEditor(media.editedFrom);
+      }
       if (!media || typeof media.url !== 'string') throw new Error('This recording could not be opened.');
       const duration = Number(media.duration) > 0 ? Number(media.duration) : 0;
       let keep = normalizeKeep(media.keep, duration);
@@ -746,6 +1106,7 @@
       ed.loadingPath = null;
       E.video.src = media.url;
       const session=ed.session;
+      if (bridge.getTranscript) loadTranscript(session);
       bridge.getWaveform(session.path).then(wave=>{if(ed.session===session){session.waveform=wave;drawWaveform();}}).catch(error=>{if(ed.session===session){session.waveformError=errorMessage(error);drawWaveform();}});
     } catch (err) {
       if (token !== ed.loadToken) return;
@@ -760,6 +1121,7 @@
     if (view === ed.view) return;
     ed.view = view;
     if (view === 'record') {
+      refreshSources();
       E.video.pause();
       if (ed.session) flushSave(ed.session);
     }
@@ -833,6 +1195,7 @@
       return false;
     }
     if (sameKeep(norm, s.keep)) return false;
+    ed.notice = null;
     if (undoable) {
       s.undo.push(s.keep);
       if (s.undo.length > 200) s.undo.shift();
@@ -1302,7 +1665,16 @@
     const s = ed.session;
     const method = E.enhanceMode.value === 'folio' ? 'enhanceAudio' : 'enhanceAudioQuick';
     if (!s || typeof bridge[method] !== 'function') return;
-    run('enhance', () => bridge[method](s.path, {noiseReduction:E.enhanceMode.value==='quick-quiet'?'stronger':'standard'}));
+    const source = (s.media && s.media.enhanceSource) || s.path;
+    // Cuts do not need saving first: enhancement keeps the timeline, the cut
+    // plan travels to the enhanced copy, and the editor moves there when done.
+    flushSave(s);
+    const keep = s.keep.map((r) => r.slice());
+    ed.enhanceFrom = s.path;
+    run('enhance', async () => {
+      if (typeof bridge.saveEdits === 'function') await bridge.saveEdits(source, keep);
+      return bridge[method](source, {noiseReduction:E.enhanceMode.value==='quick-quiet'?'stronger':'standard'});
+    });
   });
   E.jobCancel.addEventListener('click', () => {
     ed.canceling = true;
@@ -1314,6 +1686,257 @@
     if (state && state.job) ed.jobDismissed = jobKey(state.job);
     render();
   });
+
+  /* Transcript: local Parakeet words, optional light punctuation pass. Deleting
+     words removes their time from the keep plan, so Undo, playback and Save
+     edited copy all work the same as timeline cuts. */
+
+  // var, so renders that run before this block is reached see undefined, not an error.
+  var T = {
+    box: $('transcript'),
+    status: $('transcript-status'),
+    text: $('transcript-text'),
+    del: $('transcript-delete'),
+    ums: $('transcript-ums'),
+    make: $('transcript-make'),
+    cancel: $('transcript-cancel'),
+  };
+  var FILLERS = new Set(['um', 'umm', 'ummm', 'uh', 'uhh', 'uhm', 'erm', 'er', 'ah', 'ahh', 'hmm', 'hm', 'mm', 'mhm']);
+  const wordKey = (w) => String(w).normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+  const isFillerWord = (w) => FILLERS.has(wordKey(w));
+  const PAD = 0.2;
+  var builtFor = null, nowIndex = -1, transcriptError = null;
+
+  async function loadTranscript(session) {
+    session.transcript = null; session.transcriptAvailable = null;
+    try {
+      const res = await bridge.getTranscript(session.path);
+      if (ed.session !== session) return;
+      session.transcript = res && res.transcript && Array.isArray(res.transcript.words) ? res.transcript : null;
+      session.transcriptAvailable = !!(res && res.available);
+      // Transcripts start on their own; the button remains for a retry.
+      const job = state && state.transcriptJob;
+      if (!session.transcript && session.transcriptAvailable && !(job && job.stage !== 'failed')) makeTranscript();
+    } catch (err) {
+      if (ed.session !== session) return;
+      session.transcriptAvailable = false; transcriptError = errorMessage(err);
+    }
+    renderTranscript();
+  }
+
+  function makeTranscript() {
+    const s = ed.session;
+    if (!s || !bridge.makeTranscript) return;
+    transcriptError = null;
+    const session = s;
+    bridge.makeTranscript(s.path).then((t) => {
+      if (ed.session === session) { session.transcript = t; builtFor = null; renderTranscript(); }
+    }).catch((err) => {
+      const msg = errorMessage(err);
+      if (!/canceled/i.test(msg) && ed.session === session) transcriptError = msg;
+      renderTranscript();
+    });
+    renderTranscript();
+  }
+
+  // Time span for words i..j, reaching halfway into the pauses around them so
+  // no clipped syllable is left behind, but never more than PAD seconds.
+  function wordSpan(words, i, j, duration) {
+    // Transcripts made with measured cut points use them directly.
+    if (words[i].cut && words[j].cut) return [Math.max(0, words[i].cut[0]), Math.min(duration, words[j].cut[1])];
+    const a = i > 0 ? Math.max((words[i - 1].end + words[i].start) / 2, words[i].start - PAD) : Math.max(0, words[i].start - PAD);
+    const b = j < words.length - 1 ? Math.min((words[j].end + words[j + 1].start) / 2, words[j].end + PAD) : Math.min(duration, words[j].end + PAD);
+    return [Math.max(0, Math.min(a, words[i].start)), Math.max(b, words[j].end)];
+  }
+
+  function isKept(keep, t) {
+    for (const [a, b] of keep) { if (t < a) return false; if (t < b) return true; }
+    return false;
+  }
+
+  function wordCut(s, w) { const c = w.cut || [w.start, w.end]; return !isKept(s.keep, (c[0] + c[1]) / 2); }
+
+  function cutWords(ranges) {
+    const s = ed.session;
+    if (!s || !ranges.length) return false;
+    let next = s.keep;
+    for (const [a, b] of ranges) next = subtractRange(next, a, b);
+    return applyKeep(next);
+  }
+
+  function selectedWordRange() {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || !sel.rangeCount) return null;
+    const range = sel.getRangeAt(0);
+    if (!T.text.contains(range.commonAncestorContainer)) return null;
+    let lo = Infinity, hi = -1;
+    for (const span of T.text.querySelectorAll('.w')) {
+      if (range.intersectsNode(span.firstChild || span)) {
+        // A selection that only touches the edge of a word does not take it.
+        const i = Number(span.dataset.i);
+        if (span === range.startContainer.parentElement && range.startOffset >= span.textContent.length) continue;
+        if (span === range.endContainer.parentElement && range.endOffset === 0) continue;
+        lo = Math.min(lo, i); hi = Math.max(hi, i);
+      }
+    }
+    return hi >= 0 ? [lo, hi] : null;
+  }
+
+  function deleteSelectedWords() {
+    const s = ed.session, t = s && s.transcript;
+    const r = selectedWordRange();
+    if (!t || !r) return false;
+    cutWords([wordSpan(t.words, r[0], r[1], s.duration)]);
+    window.getSelection().removeAllRanges();
+    renderTranscript();
+    return true;
+  }
+
+  // Filler sounds, plus the false start they interrupt: in "that, uh, that"
+  // the first "that" goes with the "uh", so the sentence reads cleanly.
+  function fillerRanges(s) {
+    const words = s.transcript.words, out = [];
+    const live = (k) => !wordCut(s, words[k]);
+    for (let i = 0; i < words.length; i++) {
+      if (!isFillerWord(words[i].text) || !live(i)) continue;
+      let j = i;
+      while (j + 1 < words.length && isFillerWord(words[j + 1].text)) j++;
+      let a = i;
+      for (const n of [2, 1]) {
+        if (a - n < 0 || j + n >= words.length) continue;
+        let same = true;
+        for (let k = 0; k < n && same; k++) {
+          const before = wordKey(words[a - n + k].text), after = wordKey(words[j + 1 + k].text);
+          same = !!before && before === after && live(a - n + k);
+        }
+        if (same) { a -= n; break; }
+      }
+      out.push(wordSpan(words, a, j, s.duration));
+      i = j;
+    }
+    return out;
+  }
+
+  function removeFillers() {
+    const s = ed.session;
+    if (!s || !s.transcript) return;
+    if (cutWords(fillerRanges(s))) renderTranscript();
+  }
+
+  function buildTranscript(s) {
+    const words = s.transcript.words;
+    const frag = document.createDocumentFragment();
+    let p = document.createElement('p');
+    words.forEach((w, i) => {
+      const gap = i > 0 ? w.start - words[i - 1].end : 0;
+      // A long pause, or a shorter one after a sentence, starts a new paragraph.
+      if (i > 0 && (gap >= 1.6 || (gap >= 0.9 && /[.?!]$/.test(words[i - 1].text)))) { frag.append(p); p = document.createElement('p'); }
+      if (p.childNodes.length) p.append(' ');
+      const span = document.createElement('span');
+      span.className = isFillerWord(w.text) ? 'w filler' : 'w';
+      span.dataset.i = String(i);
+      span.textContent = w.text;
+      p.append(span);
+    });
+    frag.append(p);
+    T.text.replaceChildren(frag);
+    builtFor = s.transcript; nowIndex = -1;
+  }
+
+  function markTranscript() {
+    const s = ed.session;
+    if (!s || !s.transcript || builtFor !== s.transcript) return;
+    const words = s.transcript.words;
+    for (const span of T.text.querySelectorAll('.w')) span.classList.toggle('cut', wordCut(s, words[Number(span.dataset.i)]));
+  }
+
+  function wordAt(words, t) {
+    let lo = 0, hi = words.length - 1, found = -1;
+    while (lo <= hi) { const m = (lo + hi) >> 1; if (words[m].start <= t) { found = m; lo = m + 1; } else hi = m - 1; }
+    return found >= 0 && t <= words[found].end + 0.25 ? found : -1;
+  }
+
+  function followPlayback() {
+    const s = ed.session;
+    if (!s || !s.transcript || builtFor !== s.transcript) return;
+    const i = wordAt(s.transcript.words, E.video.currentTime);
+    if (i === nowIndex) return;
+    T.text.querySelector('.w.now')?.classList.remove('now');
+    nowIndex = i;
+    if (i < 0) return;
+    const span = T.text.querySelector(`.w[data-i="${i}"]`);
+    if (!span) return;
+    span.classList.add('now');
+    if (!E.video.paused) {
+      const box = T.text.getBoundingClientRect(), r = span.getBoundingClientRect();
+      if (r.top < box.top || r.bottom > box.bottom) span.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+  }
+
+  function renderTranscript() {
+    // A transcript that finishes for another version (for example the source of
+    // an enhanced copy) may now be available for the open one.
+    const tjob = state && state.transcriptJob;
+    if (ed.prevTranscriptJob && !tjob && ed.session && !ed.session.transcript && bridge.getTranscript) { ed.prevTranscriptJob = null; loadTranscript(ed.session); return; }
+    ed.prevTranscriptJob = tjob || null;
+    if (!T) return;
+    const s = ed.session;
+    const job = state && state.transcriptJob;
+    const mine = !!(s && job && job.file === s.path && job.stage !== 'failed');
+    const t = s && s.transcript;
+    let status = '';
+    if (!s) status = '';
+    else if (mine) status = job.stage === 'audio' ? 'Preparing audio' : job.stage === 'words' ? `Finding words ${job.percent || 0}%` : `Adding punctuation ${job.percent || 0}%`;
+    else if (transcriptError) status = transcriptError;
+    else if (job && job.stage === 'failed' && job.file === s.path && !t) status = job.error || 'The transcript could not be made.';
+    else if (t && t.polish && t.polish !== 'complete' && t.polish !== 'off') status = 'Some sections kept the original punctuation.';
+    else if (!t && s.transcriptAvailable === false) status = 'Transcription is not installed. Run scripts/setup-transcription.sh.';
+    setText(T.status, status);
+
+    T.make.hidden = !s || !!t || mine || s.transcriptAvailable === false;
+    T.make.disabled = !!(job && job.stage !== 'failed' && !mine);
+    T.make.title = T.make.disabled ? 'Another transcript is being made' : 'Find every word locally, then add punctuation';
+    T.cancel.hidden = !mine;
+    T.del.hidden = !t;
+    T.ums.hidden = !t;
+    if (t) {
+      if (builtFor !== t) buildTranscript(s);
+      markTranscript();
+      const left = fillerRanges(s).length;
+      T.ums.disabled = !left;
+      setText(T.ums, left ? `Remove filler words (${left})` : 'Remove filler words');
+      T.del.disabled = !selectedWordRange();
+    } else if (builtFor || !T.text.firstChild || T.text.dataset.mode !== (mine ? 'busy' : 'empty')) {
+      builtFor = null;
+      const empty = document.createElement('p');
+      empty.className = 'transcript-empty';
+      empty.textContent = mine ? 'Your words will appear here.' : (s && s.transcriptAvailable !== false ? 'Make a transcript to edit by text. Speech recognition runs on this computer.' : '');
+      T.text.replaceChildren(empty);
+      T.text.dataset.mode = mine ? 'busy' : 'empty';
+    }
+  }
+
+  T.make.addEventListener('click', makeTranscript);
+  T.cancel.addEventListener('click', () => { bridge.cancelTranscript().catch(() => {}); });
+  T.ums.addEventListener('click', removeFillers);
+  T.del.addEventListener('mousedown', (e) => e.preventDefault()); // keep the word selection
+  T.del.addEventListener('click', deleteSelectedWords);
+  document.addEventListener('selectionchange', () => {
+    const s = ed.session;
+    if (s && s.transcript && !T.del.hidden) T.del.disabled = !selectedWordRange();
+  });
+  // A plain click on a word plays from there; dragging selects words to delete.
+  T.text.addEventListener('click', (e) => {
+    const span = e.target instanceof Element ? e.target.closest('.w') : null;
+    const s = ed.session;
+    if (!span || !s || !s.transcript) return;
+    const sel = window.getSelection();
+    if (sel && !sel.isCollapsed) return;
+    seek(s.transcript.words[Number(span.dataset.i)].start, 1);
+    followPlayback();
+  });
+  E.video.addEventListener('timeupdate', followPlayback);
+  E.video.addEventListener('seeked', followPlayback);
 
   document.addEventListener('keydown', (e) => {
     if (ed.view !== 'edit' || !ed.session || e.defaultPrevented || e.altKey) return;
@@ -1327,7 +1950,7 @@
       togglePlay();
     } else if ((e.key === 'Delete' || e.key === 'Backspace') && !mod) {
       e.preventDefault();
-      cutSelection();
+      if (!deleteSelectedWords()) cutSelection();
     } else if (mod && !e.shiftKey && e.key.toLowerCase() === 'b') {
       e.preventDefault();cutSelection();
     } else if (mod && !e.shiftKey && e.key.toLowerCase() === 'z') {
@@ -1343,7 +1966,7 @@
   $('share-video').addEventListener('click',()=>{
     sharePath=ed.view==='edit'?ed.session?.path:state?.lastFile;
     if(!sharePath)return;
-    $('share-name').value=baseName(sharePath).replace(/\.mp4$/i,'');
+    $('share-name').value=titleOf(sharePath);
     $('share-dialog').showModal();$('share-name').select();
   });
   $('share-cancel').addEventListener('click',()=>$('share-dialog').close());
@@ -1352,7 +1975,6 @@
     $('share-dialog').close();
     try{await window.captureFlushEdits?.();const keep=ed.session?.path===file?ed.session.keep.map(r=>r.slice()):undefined;await run('publish',()=>bridge.publishVideo(file,title,keep));}catch(error){fail(error);render();}
   });
-  $('copy-card').addEventListener('click',async()=>{const b=$('copy-card');b.disabled=true;try{await bridge.copyShareCard();b.textContent='Card copied';setTimeout(()=>b.textContent='Copy video card',2000);}catch(error){fail(error);render();}finally{b.disabled=false;}});
   $('copy-share').addEventListener('click',async()=>{try{await bridge.copyShareLink();$('copy-share').textContent='Copied';setTimeout(()=>$('copy-share').textContent='Copy link',2000);}catch(error){fail(error);render();}});
 
   /* Rendering for editor, view switch, and job */
@@ -1363,21 +1985,47 @@
 
   function renderView(s) {
     document.body.dataset.view = ed.view;
+    document.body.classList.toggle("has-session", !!ed.session);
     E.viewRecord.setAttribute('aria-pressed', String(ed.view === 'record'));
     E.viewEdit.setAttribute('aria-pressed', String(ed.view === 'edit'));
     E.viewEdit.disabled = ed.view === 'record' && ACTIVE.has(s.phase);
     E.viewEdit.title = E.viewEdit.disabled ? 'Available after recording' : '';
   }
 
+  // When audio enhancement of the open recording finishes, keep editing the
+  // enhanced copy: same cuts (including any made while it ran), same spot.
+  function adoptEnhanced(job) {
+    const from = ed.enhanceFrom;
+    if (!from || !job || job.running) return;
+    const audio = job.kind === 'folio' || job.kind === 'fast-audio' || job.kind === 'quick-audio';
+    if (!audio || job.error || !job.output) { if (!job.running) ed.enhanceFrom = null; return; }
+    ed.enhanceFrom = null;
+    const s = ed.session;
+    if (!s || s.path !== from) return;
+    const keep = s.keep.map((r) => r.slice()), at = E.video.currentTime || 0;
+    ed.jobDismissed = jobKey(job);
+    flushSave(s);
+    (async () => {
+      try { if (typeof bridge.saveEdits === 'function') await bridge.saveEdits(job.output, keep); } catch {}
+      await openEditor(job.output);
+      if (ed.session && ed.session.path === job.output) {
+        const seekTo = () => { try { E.video.currentTime = Math.min(at, E.video.duration || at); } catch {} };
+        if (E.video.readyState >= 1) seekTo(); else E.video.addEventListener('loadedmetadata', seekTo, { once: true });
+        ed.notice = 'Audio enhanced. Your cuts carried over.';
+        render();
+      }
+    })();
+  }
+
   function renderJob(s) {
     const job = s.job;
     const busy=ACTIVE.has(s.phase)||!!job?.running||!!pending;
-    $('video-library').disabled=!s.publishingReady||!!pending;
-    $('share-video').disabled=!s.publishingReady||busy||!(ed.view==='edit'?ed.session?.path:s.lastFile);
-    $('share-video').title=s.publishingReady?'Upload to vidcapture.stream':'Publishing is not connected on this computer';
+    $('video-library').hidden=!s.publishingReady;$('video-library').disabled=!!pending;
+    $('share-video').disabled=busy||!(ed.view==='edit'?ed.session?.path:s.lastFile);
+    $('share-video').title=s.publishingReady?'Upload to vidcapture.stream':'Log in or sign up at vidcapture.stream to share';
     $('copy-share').hidden=!s.share?.url;
-    $('copy-card').hidden=!s.share?.url;
     if (!job || job.running) ed.jobDismissed = null;
+    adoptEnhanced(job);
     if (!job || !job.running) ed.canceling = false;
     const status = !job ? null : job.running ? 'running' : job.error ? 'failed' : job.output ? 'done' : null;
     const show = !!status && !(status !== 'running' && ed.jobDismissed === jobKey(job));
@@ -1389,13 +2037,14 @@
     let title;
     let detail;
     if (status === 'running') {
-      title = job.kind==='publish'?'Sharing on VidCapture':audio ? (folio ? 'Enhancing audio with Folio' : job.kind==='quick-audio' ? 'Enhancing audio with Quick studio' : 'Enhancing audio with fast cleanup') : 'Saving edited copy';
+      const connecting = job.kind==='publish' && /^(Opening|Log in or sign up)/.test(job.stage||'');
+      title = connecting?'Connect your VidCapture account':job.kind==='publish'?'Sharing on VidCapture':audio ? (folio ? 'Enhancing audio with Folio' : job.kind==='quick-audio' ? 'Enhancing audio with Quick studio' : 'Enhancing audio with fast cleanup') : 'Saving version';
       detail = ed.canceling ? 'Canceling' : (job.stage || 'Working');
     } else if (status === 'done') {
-      title = job.kind==='publish'?'Your share link is ready':audio ? 'Enhanced copy saved' : 'Edited copy saved';
+      title = job.kind==='publish'?'Your share link is ready':audio ? 'Enhanced copy saved' : 'Version saved to your Library';
       detail = job.kind==='publish'?(s.share?.cardWarning||s.share?.url||'Ready to share'):baseName(job.output);
     } else {
-      title = job.kind==='publish'?'Video was not shared':audio ? 'Audio was not enhanced' : 'Edited copy was not saved';
+      title = job.kind==='publish'?'Video was not shared':audio ? 'Audio was not enhanced' : 'Version was not saved';
       detail = job.error;
     }
     setText(E.jobTitle, title);
@@ -1406,18 +2055,20 @@
     setText(E.jobCancel, ed.canceling ? 'Canceling' : 'Cancel');
     E.jobOpen.hidden = status !== 'done';
     setText(E.jobOpen,job.kind==='publish'?'Watch video':'Open result');
-    E.jobEdit.hidden = status !== 'done';
+    // A saved version reopens as this same project, so there is nothing new to edit.
+    E.jobEdit.hidden = status !== 'done' || job.kind === 'edit' || job.kind === 'publish';
     E.jobOpen.disabled = E.jobEdit.disabled = !!pending;
     E.jobDismiss.hidden = status === 'running';
   }
 
   function renderEditorControls() {
     const s = ed.session;
+    renderTranscript();
     const loading = !!ed.loadingPath;
     E.empty.hidden = !!(s || loading);
     E.main.hidden = !(s || loading);
 
-    setText(E.name, s ? (s.media.name || baseName(s.path)) : baseName(ed.loadingPath || ''));
+    setText(E.name, s ? titleOf((s.media && s.media.enhanceSource) || s.path) : titleOf(ed.loadingPath || ''));
     E.name.title = s ? s.path : (ed.loadingPath || '');
     const metaParts = [];
     if (s && dims(s.media.width, s.media.height)) metaParts.push(dims(s.media.width, s.media.height));
@@ -1472,14 +2123,421 @@
     let help = '';
     if (media && !audioReady) help = 'Audio enhancement needs a separately configured local audio runtime. Recording and editing work without it.';
     else if (media && !media.hasAudio) help = 'This recording has no microphone audio to enhance.';
-    else if (media && !media.canEnhance) help = 'This copy has no isolated microphone track to enhance.';
-    else if (hasCuts) help = 'To enhance, save an edited copy first, then enhance that copy.';
+    else if (media && !media.enhanceSource) help = 'This copy has no isolated microphone track to enhance.';
+    else if (media && media.enhanced) help = `Audio enhanced with ${media.enhanced === 'folio' ? 'Folio studio' : 'Quick studio'}. Enhance again to try another method.`;
     else if (media) help = E.enhanceMode.value === 'folio' ? 'Folio uses neural restoration and full mastering. Long recordings can take much longer.' : E.enhanceMode.value==='quick-quiet' ? 'Quick studio with stronger noise cleanup and softer pauses.' : 'Fuller voice tone and fast local cleanup. A separate enhanced copy keeps your original safe.';
     setText(E.folioHelp, help);
-    E.enhance.disabled = !media || !audioReady || !media.canEnhance || hasCuts || !!blockedBy || !!pending;
+    if (ed.notice && s) help = ed.notice;
+    E.enhance.disabled = !media || !audioReady || !media.enhanceSource || !!blockedBy || !!pending;
+    setText(E.enhance, media && media.enhanced ? 'Enhance again' : 'Enhance audio');
     E.enhance.title = blockedBy;
     E.enhanceMode.disabled = !!blockedBy || !!pending;
   }
+
+  /* Library
+     Every recording in the output folder as a grid of poster cards, with edited
+     and enhanced copies folded into one card as versions. Posters and durations
+     load lazily from the main process. Opening a card shows it in the VidCapture
+     player with its version history. */
+
+  const L = {
+    view: $('view-library'),
+    root: $('library'),
+    head: document.querySelector('.library-head'),
+    grid: $('library-grid'),
+    count: $('library-count'),
+    empty: $('library-empty'),
+    loading: $('library-loading'),
+    preview: $('library-preview'),
+    video: $('library-video'),
+    title: $('library-title'),
+    meta: $('library-meta'),
+    edit: $('library-edit'),
+    share: $('library-share'),
+    shareNote: $('library-share-note'),
+    copyLink: $('library-copy-link'),
+    openLink: $('library-open-link'),
+    linkNote: $('library-link-note'),
+    close: $('library-close'),
+    folder: $('library-folder'),
+    versions: $('library-versions'),
+    versionList: $('version-list'),
+    versionsToggle: $('versions-toggle'),
+    versionsCount: $('versions-count'),
+  };
+  const player = window.VCPlayer ? window.VCPlayer.attach($('library-player')) : null;
+  // items: one entry per recording. versions: every file by name, with its recording.
+  const lib = { items: [], byRoot: new Map(), versions: new Map(), selected: null, viewing: null, loaded: false, loading: null, again: false, requested: new Set(), recentSig: null, restoring: false, versionsOpen: false };
+
+  function libraryDuration(item) {
+    return Number(item.duration) > 0 ? formatShort(item.duration) : '';
+  }
+
+  function versionWhen(v) {
+    const d = new Date(v.modified);
+    if (Number.isNaN(d.getTime())) return '';
+    const opts = { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' };
+    if (d.getFullYear() !== new Date().getFullYear()) opts.year = 'numeric';
+    return d.toLocaleString('en-US', opts).replace(' at ', ', ');
+  }
+
+  function cardSub(item) {
+    if (item.unreadable) return 'Could not be read';
+    const n = item.versions ? item.versions.length : 1;
+    return [n > 1 ? `${n} versions` : '', formatBytes(item.bytes)].filter(Boolean).join(', ');
+  }
+
+  function libraryPoster(card, item) {
+    const box = card.querySelector('.lib-poster');
+    const dur = box.querySelector('.lib-duration');
+    dur.textContent = libraryDuration(item);
+    dur.hidden = !dur.textContent;
+    let img = box.querySelector('img');
+    if (item.poster) {
+      if (!img) {
+        img = document.createElement('img');
+        img.alt = '';
+        img.decoding = 'async';
+        img.addEventListener('load', () => { box.dataset.state = 'ready'; });
+        img.addEventListener('error', () => { box.dataset.state = 'missing'; });
+        box.prepend(img);
+      }
+      if (img.getAttribute('src') !== item.poster) img.src = item.poster;
+    } else {
+      box.dataset.state = item.unreadable ? 'missing' : 'loading';
+    }
+    card.querySelector('.lib-sub').textContent = cardSub(item);
+  }
+
+  const libraryObserver = 'IntersectionObserver' in window ? new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      libraryObserver.unobserve(entry.target);
+      const item = lib.byRoot.get(entry.target.dataset.root);
+      if (item) requestDetails(item.name);
+    }
+  }, { root: L.root, rootMargin: '300px 0px' }) : null;
+
+  async function requestDetails(name) {
+    const entry = lib.versions.get(name);
+    if (!entry || entry.version.poster || entry.version.unreadable || lib.requested.has(name)) return;
+    lib.requested.add(name);
+    let d = null;
+    try { d = await bridge.recordingDetails(name); } catch { /* The file vanished or changed; the next refresh will reconcile. */ }
+    lib.requested.delete(name);
+    const fresh = lib.versions.get(name);
+    if (!fresh) return;
+    const patch = d ? { duration: d.duration, poster: d.poster, unreadable: !!d.unreadable } : { unreadable: true };
+    Object.assign(fresh.version, patch);
+    if (fresh.item.name === name) {
+      Object.assign(fresh.item, patch);
+      const card = L.grid.querySelector(`button[data-root="${CSS.escape(fresh.item.root)}"]`);
+      if (card) libraryPoster(card, fresh.item);
+    }
+    if (lib.selected === fresh.item.root) render();
+  }
+
+  function buildLibraryGrid() {
+    if (libraryObserver) libraryObserver.disconnect();
+    L.grid.textContent = '';
+    for (const item of lib.items) {
+      const li = document.createElement('li');
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'lib-card';
+      b.dataset.root = item.root;
+      b.title = item.title;
+      const box = span('lib-poster');
+      box.appendChild(icon('i-video', 'lib-placeholder'));
+      box.appendChild(span('lib-duration mono'));
+      b.appendChild(box);
+      b.appendChild(span('lib-title', item.title));
+      b.appendChild(span('lib-sub'));
+      libraryPoster(b, item);
+      li.appendChild(b);
+      L.grid.appendChild(li);
+      if (!item.poster && !item.unreadable) {
+        if (libraryObserver) libraryObserver.observe(b);
+        else requestDetails(item.name);
+      }
+    }
+  }
+
+  function setLibraryItems(items) {
+    // Keep details that arrived after the listing was read.
+    const old = lib.versions;
+    for (const item of items) {
+      for (const v of item.versions || []) {
+        const prev = old.get(v.name);
+        if (prev && prev.version.key === v.key && !v.poster) Object.assign(v, { duration: prev.version.duration ?? v.duration, poster: prev.version.poster, unreadable: prev.version.unreadable || v.unreadable });
+      }
+      const cur = (item.versions || []).find((v) => v.name === item.name);
+      if (cur) Object.assign(item, { duration: cur.duration, poster: cur.poster, unreadable: cur.unreadable });
+    }
+    lib.items = items;
+    lib.byRoot = new Map(items.map((i) => [i.root, i]));
+    lib.versions = new Map();
+    for (const item of items) for (const v of item.versions || [{ ...item, label: 'Original', current: true, original: true }]) lib.versions.set(v.name, { version: v, item });
+    if (lib.selected && !lib.byRoot.has(lib.selected)) {
+      // A rename moves the whole set; follow it when the file being watched moved.
+      const moved = lib.viewing && state && state.renamed && baseName(state.renamed.from) === lib.viewing ? lib.versions.get(baseName(state.renamed.to)) : null;
+      if (moved) { lib.selected = moved.item.root; lib.viewing = moved.version.name; } else closeLibraryPreview();
+    }
+    if (lib.selected && lib.viewing && !lib.versions.has(lib.viewing)) lib.viewing = lib.byRoot.get(lib.selected).name;
+    if (lib.selected) showVersion(lib.viewing);
+  }
+
+  async function loadLibrary() {
+    if (!bridge || typeof bridge.listRecordings !== 'function') return;
+    if (lib.loading) { lib.again = true; return lib.loading; }
+    lib.recentSig = JSON.stringify(state && state.recent);
+    lib.loading = (async () => {
+      await null;
+      try {
+        setLibraryItems(await bridge.listRecordings());
+        lib.loaded = true;
+        buildLibraryGrid();
+      } catch (err) {
+        fail(err);
+      }
+    })();
+    render();
+    try { await lib.loading; } finally {
+      lib.loading = null;
+      render();
+      if (lib.again) { lib.again = false; loadLibrary(); }
+    }
+  }
+
+  // Plays one version of the open recording.
+  function showVersion(name) {
+    const entry = lib.versions.get(name);
+    if (!entry || !player) return;
+    const src = `capture-media://recording/${encodeURIComponent(name)}`;
+    const same = L.video.getAttribute('src') === src;
+    lib.viewing = name;
+    if (!same) player.load(src, { poster: entry.version.poster || undefined });
+    requestDetails(name);
+    render();
+  }
+
+  function selectLibraryItem(root) {
+    const item = lib.byRoot.get(root);
+    if (!item) return;
+    if (lib.selected !== root) lib.versionsOpen = false;
+    lib.selected = root;
+    showVersion(item.name);
+    L.root.scrollTo({ top: 0 });
+    render();
+    if (player) player.focus();
+  }
+
+  function closeLibraryPreview() {
+    const root = lib.selected;
+    lib.selected = null;
+    lib.viewing = null;
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    if (player) player.clear();
+    render();
+    const card = root && L.grid.querySelector(`button[data-root="${CSS.escape(root)}"]`);
+    if (card) card.focus({ preventScroll: false });
+  }
+
+  function renderVersions(item) {
+    const versions = item.versions || [];
+    // Versions stay folded away; the player is the page.
+    L.versionsToggle.hidden = versions.length < 2;
+    setText(L.versionsCount, `${versions.length} versions`);
+    L.versionsToggle.setAttribute('aria-expanded', String(lib.versionsOpen));
+    L.versions.hidden = versions.length < 2 || !lib.versionsOpen;
+    if (L.versions.hidden) { L.versionList.textContent = ''; delete L.versionList.dataset.sig; return; }
+    const sig = JSON.stringify([lib.viewing, versions.map((v) => [v.name, v.current, v.poster, v.duration, v.unreadable])]);
+    if (L.versionList.dataset.sig === sig) return;
+    L.versionList.dataset.sig = sig;
+    L.versionList.textContent = '';
+    for (const v of versions) {
+      const li = document.createElement('li');
+      li.className = 'version';
+      if (v.name === lib.viewing) li.classList.add('is-viewing');
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'version-play';
+      b.dataset.version = v.name;
+      b.setAttribute('aria-current', String(v.name === lib.viewing));
+      const thumb = span('version-thumb');
+      if (v.poster) { const img = document.createElement('img'); img.alt = ''; img.src = v.poster; thumb.appendChild(img); }
+      else if (!v.unreadable) requestDetails(v.name);
+      b.appendChild(thumb);
+      const text = span('version-text');
+      text.appendChild(span('version-label', v.label));
+      text.appendChild(span('version-sub', [versionWhen(v), v.duration > 0 ? formatShort(v.duration) : '', formatBytes(v.bytes)].filter(Boolean).join(', ')));
+      b.appendChild(text);
+      b.setAttribute('aria-label', `Play ${v.label}, ${versionWhen(v)}`);
+      li.appendChild(b);
+      if (v.current) {
+        const mark = icon('i-check', 'version-current');
+        mark.setAttribute('role', 'img');
+        mark.setAttribute('aria-label', 'Current version');
+        mark.removeAttribute('aria-hidden');
+        li.appendChild(mark);
+      } else {
+        const r = document.createElement('button');
+        r.type = 'button';
+        r.className = 'icon-btn version-restore';
+        r.dataset.restore = v.name;
+        r.title = 'Make this the current version';
+        r.setAttribute('aria-label', `Make ${v.label} from ${versionWhen(v)} the current version`);
+        r.appendChild(icon('i-undo'));
+        li.appendChild(r);
+      }
+      L.versionList.appendChild(li);
+    }
+  }
+
+  function renderLibraryPreview() {
+    const item = lib.selected && lib.byRoot.get(lib.selected);
+    L.preview.hidden = !item;
+    L.root.classList.toggle('is-watching', !!item);
+    if (!item) return;
+    const v = (lib.versions.get(lib.viewing) || {}).version || item;
+    setText(L.title, item.title);
+    L.title.title = v.name;
+    const parts = [v.current === false ? v.label : '', versionWhen(v), libraryDuration(v)];
+    setText(L.meta, v.unreadable ? 'This recording could not be read.' : parts.filter(Boolean).join(', '));
+    renderVersions(item);
+  }
+
+  function renderLibrary(s) {
+    const on = ed.view === 'library';
+    L.view.setAttribute('aria-pressed', String(on));
+    if (!on) { if (player) player.pause(); return; }
+    const recentSig = JSON.stringify(s && s.recent);
+    if (lib.loaded && !lib.loading && recentSig !== lib.recentSig) { lib.recentSig = recentSig; loadLibrary(); }
+    // A finished share saves its link on the recording; show it.
+    const shared = s && s.job && s.job.kind === 'publish' && !s.job.running && !s.job.error ? s.share && s.share.url : null;
+    if (shared && shared !== lib.sharedSig) { lib.sharedSig = shared; if (lib.loaded) loadLibrary(); }
+    lib.recentSig = recentSig;
+    const n = lib.items.length;
+    const total = lib.items.reduce((sum, i) => sum + (i.versions || [i]).reduce((t, v) => t + (Number(v.bytes) || 0), 0), 0);
+    setText(L.count, n ? `${n} ${n === 1 ? 'recording' : 'recordings'}, ${formatBytes(total)}` : '');
+    const watching = !!lib.selected;
+    L.head.hidden = watching;
+    L.loading.hidden = watching || lib.loaded || !lib.loading;
+    L.empty.hidden = watching || !lib.loaded || n > 0;
+    L.grid.hidden = watching || n === 0;
+    L.folder.disabled = !bridge;
+    const recordingBusy = !!s && ACTIVE.has(s.phase);
+    const jobRunning = !!(s && s.job && s.job.running);
+    const ready = !!(s && s.publishingReady);
+    const entry = lib.viewing && lib.versions.get(lib.viewing);
+    const unreadable = !!(entry && entry.version.unreadable);
+    L.edit.disabled = !entry || unreadable || recordingBusy;
+    L.edit.title = recordingBusy ? 'Finish recording first' : '';
+    L.share.disabled = !entry || unreadable || recordingBusy || jobRunning || !!pending;
+    L.share.title = recordingBusy ? 'Finish recording first' : jobRunning ? 'Wait for the current job to finish' : ready ? 'Upload to vidcapture.stream' : 'Log in or sign up at vidcapture.stream to share';
+    L.shareNote.hidden = ready;
+    // A recording already online keeps its link instead of uploading again.
+    const link = entry && entry.version.share;
+    L.copyLink.hidden = !link;
+    L.openLink.hidden = !link;
+    L.share.hidden = !!(link && link.current);
+    L.linkNote.hidden = !(link && !link.current);
+    setText(L.share.querySelector('span'), link && !link.current ? 'Share edited version' : 'Create shareable link');
+    L.copyLink.classList.toggle('btn-solid', !!(link && link.current));
+    L.copyLink.classList.toggle('btn-quiet', !!(link && !link.current));
+    if (link) L.copyLink.title = link.url;
+    renderLibraryPreview();
+  }
+
+  function showLibrary() {
+    if (ed.view === 'library') return;
+    if (ed.view === 'edit') {
+      E.video.pause();
+      if (ed.session) flushSave(ed.session);
+    }
+    setView('library');
+    loadLibrary();
+    syncShares();
+  }
+
+  async function restoreVersion(name) {
+    const item = lib.selected && lib.byRoot.get(lib.selected);
+    if (!item || !name || lib.restoring) return;
+    lib.restoring = true;
+    render();
+    try {
+      setLibraryItems(await bridge.setCurrentVersion(item.root, name));
+      buildLibraryGrid();
+      showVersion(name);
+    } catch (err) {
+      fail(err);
+    } finally {
+      lib.restoring = false;
+      render();
+    }
+  }
+
+  L.view.addEventListener('click', showLibrary);
+  $('library-record').addEventListener('click', () => setView('record'));
+  L.grid.addEventListener('click', (e) => {
+    const b = e.target.closest('button.lib-card');
+    if (b) selectLibraryItem(b.dataset.root);
+  });
+  L.close.addEventListener('click', closeLibraryPreview);
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || ed.view !== 'library' || !lib.selected || e.defaultPrevented || document.fullscreenElement) return;
+    if (document.querySelector('dialog[open]')) return;
+    e.preventDefault();
+    closeLibraryPreview();
+  });
+  L.versionsToggle.addEventListener('click', () => { lib.versionsOpen = !lib.versionsOpen; render(); });
+  L.versionList.addEventListener('click', (e) => {
+    const r = e.target.closest('button[data-restore]');
+    if (r) { restoreVersion(r.dataset.restore); return; }
+    const b = e.target.closest('button[data-version]');
+    if (b) { showVersion(b.dataset.version); if (player) player.focus(); }
+  });
+  L.edit.addEventListener('click', () => {
+    const entry = lib.viewing && lib.versions.get(lib.viewing);
+    if (!entry) return;
+    if (player) player.pause();
+    openEditor(entry.version.path);
+  });
+  L.share.addEventListener('click', () => {
+    const entry = lib.viewing && lib.versions.get(lib.viewing);
+    if (!entry || L.share.disabled) return;
+    if (player) player.pause();
+    // The share form includes saved edits for this file, or the open editor's plan.
+    sharePath = entry.version.path;
+    $('share-name').value = entry.item.title;
+    $('share-dialog').showModal();
+    $('share-name').select();
+  });
+  const viewedLink = () => { const entry = lib.viewing && lib.versions.get(lib.viewing); return entry && entry.version.share; };
+  L.copyLink.addEventListener('click', async () => {
+    const link = viewedLink();
+    if (!link) return;
+    try {
+      await bridge.copyLink(link.url);
+      setText(L.copyLink.querySelector('span'), 'Copied');
+      setTimeout(() => setText(L.copyLink.querySelector('span'), 'Copy link'), 1800);
+    } catch (err) { fail(err); render(); }
+  });
+  L.openLink.addEventListener('click', async () => {
+    const link = viewedLink();
+    if (link) try { await bridge.openLink(link.url); } catch (err) { fail(err); render(); }
+  });
+  // Checks vidcapture.stream for links removed or renamed online, at most once a minute.
+  let syncedAt = 0;
+  async function syncShares() {
+    if (!bridge || typeof bridge.syncShares !== 'function' || !state || !state.publishingReady || Date.now() - syncedAt < 60000) return;
+    syncedAt = Date.now();
+    try { const r = await bridge.syncShares(); if (r && r.changed) loadLibrary(); } catch { syncedAt = 0; }
+  }
+  L.folder.addEventListener('click', async () => {
+    try { await bridge.openFolder(); } catch (err) { fail(err); render(); }
+  });
+  window.addEventListener('focus', () => { if (ed.view === 'library' && lib.loaded) loadLibrary(); });
 
   /* Startup */
 
@@ -1510,6 +2568,7 @@
       localError = errorMessage(err);
     }
     render();
+    refreshSources();
   }
 
   window.addEventListener('unhandledrejection', (e) => {
