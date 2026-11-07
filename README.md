@@ -4,7 +4,7 @@ A Loom-style recording workflow for Omarchy. Record your screen, cut the take lo
 
 VidCapture records a window, area, or display with a microphone and an optional camera bubble. Trim the ends, cut sections, and export a separate MP4. Recording and editing work without an account. Optional sharing uses a Cloudflare Worker you deploy in your own account.
 
-**Early source release, v0.1.0-alpha.1.** Tested on one Omarchy workstation with Hyprland 0.56.2, Electron 43, GPU Screen Recorder 6.1.4, and FFmpeg 9. Broader hardware compatibility is not yet established. Hosted signup at vidcapture.stream is not open.
+**Early source release, v0.1.0-alpha.2.** Tested on one Omarchy workstation with Hyprland 0.56.2, Electron 43, GPU Screen Recorder 6.1.4, and FFmpeg 9. Broader hardware compatibility is not yet established. Hosted signup at vidcapture.stream is not open.
 
 [Project website](https://vidcapture.stream) · [Releases](https://github.com/campeterson41/vidcapture/releases) · [Report a bug](https://github.com/campeterson41/vidcapture/issues)
 
@@ -32,7 +32,7 @@ Then clone and install:
 ```sh
 git clone https://github.com/campeterson41/vidcapture.git
 cd vidcapture
-git checkout v0.1.0-alpha.1
+git checkout v0.1.0-alpha.2
 ./engine/build.sh
 ./engine/build-camera.sh
 ./install.sh

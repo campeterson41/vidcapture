@@ -1,6 +1,6 @@
 {
   "name": "vidcapture",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.2",
   "private": true,
   "description": "Record, cut, and share screen videos on Omarchy",
   "main": "main.cjs",

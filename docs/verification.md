@@ -1,4 +1,4 @@
-# v0.1.0-alpha.1 verification
+# v0.1.0-alpha.2 verification
 
 Release preparation on November 7, 2026:
 
