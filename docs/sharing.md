@@ -19,6 +19,8 @@ Edit wrangler.jsonc: set database_id to the new database's ID. Give the Worker a
 
 Account email (confirming addresses, password resets, and sign-in links) uses [Cloudflare Email Sending](https://developers.cloudflare.com/email-routing/email-workers/send-email-workers/). Set EMAIL_FROM and the send_email sender to an address on a domain you have set up for it. Pairing below does not need email, so you can skip this until you want accounts.
 
+To send through Amazon SES instead, verify your sending domain in SES and add the Worker secrets SES_ACCESS_KEY_ID and SES_SECRET_ACCESS_KEY (`npx wrangler secret put SES_ACCESS_KEY_ID`), plus SES_REGION if it is not us-east-1. Use an IAM key limited to sending email. When those secrets are set, the Worker uses SES; otherwise it uses the send_email binding.
+
 ```sh
 npx wrangler d1 migrations apply DB --remote
 npx wrangler deploy

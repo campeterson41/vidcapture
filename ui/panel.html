@@ -27,6 +27,8 @@
     <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6l-12 12"/><path d="M6 6l12 12"/></symbol>
     <symbol id="i-pause" viewBox="0 0 24 24"><path d="M6 6a1 1 0 0 1 1 -1h2a1 1 0 0 1 1 1v12a1 1 0 0 1 -1 1h-2a1 1 0 0 1 -1 -1z"/><path d="M14 6a1 1 0 0 1 1 -1h2a1 1 0 0 1 1 1v12a1 1 0 0 1 -1 1h-2a1 1 0 0 1 -1 -1z"/></symbol>
     <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4v16l13 -8z"/></symbol>
+    <symbol id="i-restart" viewBox="0 0 24 24"><path d="M19.95 11a8 8 0 1 0 -.5 4m.5 5v-5h-5"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7l16 0"/><path d="M10 11l0 6"/><path d="M14 11l0 6"/><path d="M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2l1 -12"/><path d="M9 7v-3a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v3"/></symbol>
     <symbol id="i-stop" viewBox="0 0 24 24"><path d="M5 7a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v10a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2z"/></symbol>
   </svg>
 
@@ -43,6 +45,7 @@
           <button type="button" role="tab" id="tab-screen" data-tab="screen" aria-controls="source-screen" aria-selected="true"><svg class="icon" aria-hidden="true"><use href="#i-desktop"/></svg>Full screen</button>
           <button type="button" role="tab" id="tab-window" data-tab="window" aria-controls="source-window" aria-selected="false" tabindex="-1"><svg class="icon" aria-hidden="true"><use href="#i-window"/></svg>Window</button>
           <button type="button" role="tab" id="tab-area" data-tab="area" aria-controls="source-area" aria-selected="false" tabindex="-1"><svg class="icon" aria-hidden="true"><use href="#i-marquee"/></svg>Area</button>
+          <button type="button" role="tab" id="tab-camera" data-tab="camera" aria-controls="source-camera" aria-selected="false" tabindex="-1"><svg class="icon" aria-hidden="true"><use href="#i-camera"/></svg>Camera</button>
         </div>
 
         <div class="source" id="source-screen" role="tabpanel" aria-labelledby="tab-screen">
@@ -61,6 +64,10 @@
           </div>
         </div>
 
+        <div class="source" id="source-camera" role="tabpanel" aria-labelledby="tab-camera" hidden>
+          <ul class="windows" id="cameras" aria-label="Cameras"></ul>
+        </div>
+
         <div class="devices">
           <div class="device">
             <button type="button" class="select" id="camera-select" aria-haspopup="menu" aria-expanded="false" aria-label="Camera"><svg class="icon" aria-hidden="true"><use href="#i-camera"/></svg><span class="value" id="camera-value">No camera</span><svg class="icon chev" aria-hidden="true"><use href="#i-chevron"/></svg></button>
@@ -77,10 +84,10 @@
           <div class="setting"><span>Countdown</span><div class="seg" data-key="countdown" role="group" aria-label="Countdown"><button type="button" data-v="3">3 seconds</button><button type="button" data-v="0">Off</button></div></div>
           <div class="setting"><span>Quality</span><div class="seg" data-key="quality" role="group" aria-label="Quality"><button type="button" data-v="high">High</button><button type="button" data-v="very_high">Very high</button><button type="button" data-v="ultra">Ultra</button></div></div>
           <div class="setting"><span>Frame rate</span><div class="seg" data-key="fps" role="group" aria-label="Frame rate"><button type="button" data-v="30">30</button><button type="button" data-v="60">60</button></div></div>
-          <div class="setting"><span>Video size</span><div class="seg" data-key="resolution" role="group" aria-label="Video size"><button type="button" data-v="0x0">Match source</button><button type="button" data-v="1920x1080">1080p</button></div></div>
+          <div class="setting"><span>Resolution</span><div class="seg" data-key="resolution" role="group" aria-label="Resolution"><button type="button" data-v="0x0">Match source</button><button type="button" data-v="1920x1080">1080p</button></div></div>
           <div class="setting"><span>Camera size</span><div class="seg" data-key="cameraSize" role="group" aria-label="Camera size"><button type="button" data-v="small">Small</button><button type="button" data-v="medium">Medium</button><button type="button" data-v="large">Large</button></div></div>
           <div class="setting"><span>Camera corner</span><div class="seg" data-key="cameraCorner" role="group" aria-label="Camera corner"><button type="button" data-v="bottom-left">Left</button><button type="button" data-v="bottom-right">Right</button></div></div>
-          <div class="setting"><span>Camera light</span><div class="seg" data-key="cameraLighting" role="group" aria-label="Camera light"><button type="button" data-v="original">Original</button><button type="button" data-v="balanced">Balanced</button></div></div>
+          <div class="setting"><span>Camera lighting</span><div class="seg" data-key="cameraLighting" role="group" aria-label="Camera lighting"><button type="button" data-v="original">Original</button><button type="button" data-v="balanced">Balanced</button></div></div>
           <div class="setting"><span>Lens correction</span><div class="seg" data-key="cameraCorrection" role="group" aria-label="Lens correction"><button type="button" data-v="computer">On</button><button type="button" data-v="off">Off</button></div></div>
         </div>
       </div>
@@ -95,9 +102,18 @@
     <section id="live" hidden>
       <div class="live-time" role="timer" aria-label="Elapsed time"><span class="rec-dot" id="live-dot" aria-hidden="true"></span><span id="live-elapsed">0:00</span></div>
       <p class="live-what" id="live-what"></p>
-      <div class="live-actions">
+      <div class="live-actions" id="live-actions">
         <button type="button" class="quiet-btn" id="live-pause"><svg class="icon" aria-hidden="true"><use href="#i-pause"/></svg><span>Pause</span></button>
         <button type="button" class="stop-btn" id="live-stop"><svg class="icon" aria-hidden="true"><use href="#i-stop"/></svg>Stop and save</button>
+        <button type="button" class="plain-btn" id="live-restart"><svg class="icon" aria-hidden="true"><use href="#i-restart"/></svg>Restart</button>
+        <button type="button" class="plain-btn" id="live-discard"><svg class="icon" aria-hidden="true"><use href="#i-trash"/></svg>Delete take</button>
+      </div>
+      <div class="live-confirm" id="live-confirm" role="group" aria-labelledby="live-confirm-text" hidden>
+        <p class="live-confirm-text" id="live-confirm-text"></p>
+        <div class="live-actions">
+          <button type="button" class="quiet-btn" id="live-confirm-cancel">Cancel</button>
+          <button type="button" class="stop-btn" id="live-confirm-go"></button>
+        </div>
       </div>
     </section>
 

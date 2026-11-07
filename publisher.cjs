@@ -5,13 +5,14 @@ const os=require('node:os');
 const {validKeep}=require('./media.cjs');
 const {createThumbnail}=require('./thumbnail.cjs');
 const {planKey,readMeta,updateMeta,validRecord}=require('./shares.cjs');
+const {buildVTT}=require('./captions.cjs');
 const ORIGIN='https://vidcapture.stream';
 // The Worker records each part independently and verifies all of them on completion,
 // so parts can travel concurrently and finish in any order.
 const CONCURRENCY=5,PART_ATTEMPTS=4;
 function wait(ms,signal){return new Promise((resolve,reject)=>{if(signal.aborted)return reject(signal.reason);const stop=()=>{clearTimeout(timer);reject(signal.reason);};const timer=setTimeout(()=>{signal.removeEventListener('abort',stop);resolve();},ms);signal.addEventListener('abort',stop,{once:true});});}
 class Publisher {
- constructor(recorder,media,options={}){this.rec=recorder;this.media=media;this.fixedOrigin=options.origin;this.origin=options.origin||ORIGIN;this.fetch=options.fetch||fetch;this.openExternal=options.openExternal;this.pairInterval=options.pairInterval??2000;this.concurrency=Math.max(1,Math.min(16,Math.floor(options.concurrency||CONCURRENCY)));this.retryDelay=options.retryDelay??500;this.controller=null;this.configFile=path.join(recorder.dataDir,'publishing.json');this.checkpoints=path.join(recorder.dataDir,'uploads');}
+ constructor(recorder,media,options={}){this.rec=recorder;this.media=media;this.fixedOrigin=options.origin;this.origin=options.origin||ORIGIN;this.fetch=options.fetch||fetch;this.openExternal=options.openExternal;this.transcript=options.transcript||null;this.log=options.log||((...a)=>console.error(...a));this.pairInterval=options.pairInterval??2000;this.concurrency=Math.max(1,Math.min(16,Math.floor(options.concurrency||CONCURRENCY)));this.retryDelay=options.retryDelay??500;this.controller=null;this.configFile=path.join(recorder.dataDir,'publishing.json');this.checkpoints=path.join(recorder.dataDir,'uploads');}
  async init(){try{const c=await this.config();this.origin=c.origin;this.rec.state.publishingReady=true;}catch{this.rec.state.publishingReady=false;}}
  async config(){const c=JSON.parse(await fs.readFile(this.configFile,'utf8'));let origin;try{origin=new URL(c.origin);}catch{throw new Error('Publishing is not connected on this computer.');}if(!/^[a-f0-9]{64}$/.test(c.token)||origin.origin!==c.origin||origin.protocol!=='https:'||origin.username||origin.password||(this.fixedOrigin&&c.origin!==this.fixedOrigin))throw new Error('Publishing is not connected on this computer.');return c;}
  async request(route,options={}){
@@ -70,10 +71,23 @@ class Publisher {
    }
   }finally{await fs.rm(work,{recursive:true,force:true});}
  }
+ // Captions for the shared cut, from the original recording's transcript. Optional:
+ // any failure is logged and the share goes on without them.
+ async uploadCaptions(original,plan,duration,id){
+  if(!this.transcript)return false;
+  try{
+   const t=(await this.transcript(original))?.transcript;
+   if(!t||!Array.isArray(t.words)||!t.words.length)return false;
+   const vtt=buildVTT(t.words,plan,duration);if(!vtt)return false;
+   this.media.stage('Adding captions');
+   await this.request(`/api/admin/videos/${id}/captions`,{method:'PUT',headers:{'Content-Type':'text/vtt'},body:Buffer.from(vtt)});
+   return true;
+  }catch(error){this.log('Captions were not uploaded:',error.message);return false;}
+ }
  async card(){
   const share=this.rec.state.share;if(!share?.id)throw new Error('No share link is ready.');
   const video=await this.request(`/api/admin/videos/${share.id}`);
-  if(!video.thumbnailReady)throw new Error('This video has no thumbnail yet. Open Video library to create its card.');
+  if(!video.thumbnailReady)throw new Error('This video has no thumbnail yet. Open Online library to create its card.');
   return require('./share-card.cjs').shareCard(video,this.origin);
  }
  cancel(){this.controller?.abort();}
@@ -176,7 +190,7 @@ class Publisher {
     let result=upload,thumbnailReady=!!upload.thumbnailReady,cardWarning=null;
     const prepareCard=async()=>{
      try{await this.uploadThumbnail(file,id);thumbnailReady=true;}
-     catch(error){if(this.media.cancelled||this.controller.signal.aborted)throw error;cardWarning='Video ready. The preview could not be created. Open Video library to try the card again.';}
+     catch(error){if(this.media.cancelled||this.controller.signal.aborted)throw error;cardWarning='Video ready. The preview could not be created. Open Online library to try the card again.';}
     };
     if(upload.status!=='ready'){
      if(upload.chunkSize!==8*1024*1024||!Array.isArray(upload.parts))throw new Error('Invalid upload settings.');
@@ -187,6 +201,7 @@ class Publisher {
     }
     if(typeof result.url!=='string'||!new RegExp('^'+this.origin.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'/v/[a-f0-9]{48}$').test(result.url))throw new Error('Publishing did not return a valid link.');
     if(upload.status==='ready'&&!thumbnailReady)await prepareCard();
+    await this.uploadCaptions(original,plan,info.duration,id);
     const record={id,url:result.url,title:result.title,sharedAt:new Date().toISOString()};
     await updateMeta(this.rec.dataDir,original,m=>{m.share={...record,planKey:key,duration:info.duration,uploaded:path.basename(file)};});
     if(file!==original)await updateMeta(this.rec.dataDir,file,m=>{m.share={...record,planKey:'full',duration:current.duration,uploaded:path.basename(file)};});

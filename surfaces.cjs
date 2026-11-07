@@ -11,7 +11,7 @@ const delay=ms=>new Promise(r=>setTimeout(r,ms));
 const LIVE=new Set(['recording','paused']);
 const BUSY=new Set(['selecting','starting','recording','paused','stopping']);
 const BAR={width:392,height:52};
-const PILL={width:212,height:44};
+const PILL={width:300,height:44};
 const DOT={width:28,height:28};
 const PANEL={width:380,height:580};
 const COUNT={width:168,height:168};
@@ -230,7 +230,7 @@ class Surfaces{
 
   stageWanted(){
     const s=this.recorder.state;
-    return !!(this.panel&&!this.panel.isDestroyed()&&!this.picker&&!this.counting&&!this.startPending&&s.target&&!this.busy()&&s.phase!=='selecting');
+    return !!(this.panel&&!this.panel.isDestroyed()&&!this.picker&&!this.counting&&!this.startPending&&s.target&&s.target.kind!=='camera'&&!this.busy()&&s.phase!=='selecting');
   }
 
   syncStage(){
@@ -367,15 +367,15 @@ class Surfaces{
   // Thumbnails travel once, with the first state; later updates omit them.
   panelState(full=true){
     const s=this.recorder.snapshot(),snap=this.panelSnapshot||{monitors:[],windows:[]};
-    const out={phase:s.phase,elapsed:s.elapsed,settings:s.settings,devices:{microphones:s.devices.microphones,cameras:s.devices.cameras},target:s.target,cameraPreview:!!s.cameraPreview,error:s.error,job:s.job?{running:!!s.job.running}:null,here:snap.here};
+    const out={phase:s.phase,elapsed:s.elapsed,shortcuts:s.shortcuts||{},settings:s.settings,devices:{microphones:s.devices.microphones,cameras:s.devices.cameras},target:s.target,cameraPreview:!!s.cameraPreview,error:s.error,job:s.job?{running:!!s.job.running}:null,here:snap.here};
     // The panel page is rebuilt on every open, so the last choice per tab
     // lives here.
     const t=s.target;
-    if(t){const tab=t.kind==='window'?'window':t.kind==='region'?'area':'screen';this.panelMemo={...this.panelMemo,[tab]:t};}
+    if(t){const tab=t.kind==='window'?'window':t.kind==='region'?'area':t.kind==='camera'?'camera':'screen';this.panelMemo={...this.panelMemo,[tab]:t};}
     out.memo=this.panelMemo||{};
     out.tab=this.panelTab||null;
     // Sizes in the panel are the saved file's pixels, as in the picker.
-    if(t&&t.kind!=='monitor'){const m=geometry.monitorAt(snap.raw||[],t.x+t.width/2,t.y+t.height/2);if(m)out.targetSize=geometry.physicalSize(t,m.scale);}
+    if(t&&t.kind!=='monitor'&&t.kind!=='camera'){const m=geometry.monitorAt(snap.raw||[],t.x+t.width/2,t.y+t.height/2);if(m)out.targetSize=geometry.physicalSize(t,m.scale);}
     if(full){out.monitors=snap.monitors;out.windows=snap.windows;}
     return out;
   }
@@ -406,7 +406,7 @@ class Surfaces{
     const t=this.recorder.state.target;let area=null;
     if(t&&t.kind==='region')area=await this.thumb(['-g',`${t.x},${t.y} ${t.width}x${t.height}`,'-s',String(Math.min(1,480/Math.max(1,t.width)))]);
     const memo={...(this.panelMemo||{})};
-    if(t)memo[t.kind==='window'?'window':t.kind==='region'?'area':'screen']=t;
+    if(t)memo[t.kind==='window'?'window':t.kind==='region'?'area':t.kind==='camera'?'camera':'screen']=t;
     this.panelMemo=memo;
     return {monitors:snap.monitors,windows:snap.windows,area,memo};
   }
@@ -441,6 +441,13 @@ class Surfaces{
         else if(this.panel&&!this.panel.isDestroyed()&&this.panel.address)await this.focusAddress(this.panel.address);
       }
       await this.recorder.chooseTarget(`window:${w.address}`);
+    }else if(sel.kind==='camera'){
+      // Camera only. Choosing a camera here also sets the camera setting.
+      if(sel.device!=null&&sel.device!==this.recorder.state.settings.camera){
+        if(!this.recorder.state.devices.cameras.some(c=>c.id===sel.device))throw new Error('That camera is no longer connected.');
+        await this.recorder.saveSettings({camera:sel.device});
+      }
+      await this.recorder.chooseTarget('camera');
     }else if(sel.kind==='region'){
       // Switching back to the Area tab restores the area drawn earlier.
       const r=[sel.x,sel.y,sel.width,sel.height].map(Number);
@@ -477,7 +484,8 @@ class Surfaces{
     const st=this.recorder.state,t=st.target;
     if(!t)throw new Error('Choose what to record.');
     if(t.kind==='window'&&t.available===false)throw new Error('That window was closed. Choose another.');
-    if(st.settings.camera!=='none'&&(t.width<90||t.height<90)){
+    if(t.kind==='camera'&&st.settings.camera==='none')throw new Error('Choose a camera to record.');
+    if(t.kind!=='camera'&&st.settings.camera!=='none'&&(t.width<90||t.height<90)){
       // Say the minimum in the saved file's pixels, as the panel shows sizes.
       const m=geometry.monitorAt(this.panelSnapshot?.raw||[],t.x+t.width/2,t.y+t.height/2);
       const min=geometry.physicalSize({width:90,height:90},m?.scale||1).width;
@@ -495,6 +503,72 @@ class Surfaces{
     finally{this.startPending=false;}
   }
 
+  /* Takes started outside the panel: shortcuts and Restart */
+
+  // Counts down, then records. A canceled countdown or a failed start brings
+  // the record panel back so the user can see why.
+  async startTake(){
+    if(this.busy())return false;
+    const mainWasVisible=this.mainVisible();
+    this.startPending=true;
+    this.closePanel();this.hideMain();
+    try{
+      if(!(await this.countdown())){this.startPending=false;if(mainWasVisible)this.showMain();await this.ensurePanel(this.panelArgs);return false;}
+      await this.recorder.start();return true;
+    }catch(e){this.startPending=false;this.recorder.set({error:e.message});if(mainWasVisible)this.showMain();await this.ensurePanel(this.panelArgs);return false;}
+    finally{this.startPending=false;}
+  }
+
+  // Start or stop from the shortcut. A second press during the countdown cancels it.
+  async toggleRecording(){
+    const s=this.recorder.state;
+    if(this.counting){this.closeCountdown();return;}
+    if(LIVE.has(s.phase)){
+      this.closeControls();
+      return this.recorder.stop().catch(e=>this.recorder.set({error:e.message})).finally(()=>this.showMain());
+    }
+    if(this.busy()||this.retaking){
+      if(s.job?.running){this.recorder.set({error:'Wait for processing to finish, or cancel it first.'});await this.ensurePanel(this.panelArgs);}
+      return;
+    }
+    await this.settled();
+    // Nothing chosen yet: record the display under the pointer, like Full screen in the panel.
+    if(!this.recorder.state.target){
+      try{
+        const ms=await monitors();let cursor=null;try{cursor=JSON.parse(await hypr(['cursorpos','-j']));}catch{}
+        const m=(cursor&&geometry.monitorAt(ms,cursor.x,cursor.y))||ms.find(m=>m.internal)||ms[0];
+        if(m)await this.recorder.chooseTarget(m.id);
+      }catch(e){this.recorder.set({error:e.message});await this.ensurePanel(this.panelArgs);return;}
+    }
+    return this.startTake();
+  }
+
+  async togglePause(){
+    if(!LIVE.has(this.recorder.state.phase))return;
+    return this.recorder.pause().catch(e=>this.recorder.set({error:e.message}));
+  }
+
+  // Throws the current take away (its file is deleted) and records again
+  // with the same choices, after the countdown.
+  async restartTake(){
+    if(this.retaking)return;
+    this.retaking=true;
+    try{this.closeControls();await this.recorder.discard();}
+    catch(e){this.retaking=false;this.recorder.set({error:e.message});throw e;}
+    this.retaking=false;
+    await this.startTake();
+  }
+
+  // Throws the current take away and goes back to the record panel.
+  async discardTake(){
+    if(this.retaking)return;
+    this.retaking=true;
+    try{this.closeControls();await this.recorder.discard();}
+    catch(e){this.recorder.set({error:e.message});throw e;}
+    finally{this.retaking=false;}
+    await this.ensurePanel(this.panelArgs);
+  }
+
   /* Countdown */
 
   // 3, 2, 1 over the middle of what is about to be recorded. Resolves true to
@@ -506,9 +580,11 @@ class Surfaces{
     if(!seconds||!t)return true;
     this.closeCountdown(false);
     const ms=await monitors().catch(()=>[]);
-    const m=geometry.monitorAt(ms,t.x+t.width/2,t.y+t.height/2)||ms.find(m=>m.internal)||ms[0];
+    // A camera-only take counts down in the middle of the laptop display.
+    const box=t.kind==='camera'?null:t;
+    const m=(box&&geometry.monitorAt(ms,box.x+box.width/2,box.y+box.height/2))||ms.find(m=>m.internal)||ms[0];
     if(!m)return true;
-    const cx=Math.round(t.x+t.width/2),cy=Math.round(t.y+t.height/2);
+    const cx=Math.round(box?box.x+box.width/2:m.x+m.width/2),cy=Math.round(box?box.y+box.height/2:m.y+m.height/2);
     const rect={width:COUNT.width,height:COUNT.height,
       x:Math.max(m.x,Math.min(m.x+m.width-COUNT.width,cx-COUNT.width/2)),
       y:Math.max(m.y,Math.min(m.y+m.height-COUNT.height,cy-COUNT.height/2))};
@@ -678,7 +754,7 @@ class Surfaces{
     this.syncStage();
     if(LIVE.has(state.phase)){
       if(!this.controls&&!this.controlsBusy&&!this.noControls)this.controlsBusy=this.openControls(state).catch(e=>console.error('controls',e)).finally(()=>{this.controlsBusy=null;});
-      else if(this.controls&&!this.controls.isDestroyed())this.controls.webContents.send('vc:state',{phase:state.phase,elapsed:state.elapsed});
+      else if(this.controls&&!this.controls.isDestroyed())this.controls.webContents.send('vc:state',{phase:state.phase,elapsed:state.elapsed,shortcuts:state.shortcuts||{}});
     }else{
       this.noControls=false;this.closeControls();
       if(BUSY.has(state.phase)){this.closeBar();if(this.picker)this.closePicker();if(state.phase==='starting')this.closePanel();}
@@ -700,7 +776,7 @@ class Surfaces{
     win.on('closed',()=>{if(this.controls===win)this.controls=null;});
     await new Promise(r=>win.once('ready-to-show',r));
     win.address=await this.place(win,TITLES.controls,spot);
-    if(!win.isDestroyed())win.webContents.send('vc:state',{phase:this.recorder.state.phase,elapsed:this.recorder.snapshot().elapsed});
+    if(!win.isDestroyed())win.webContents.send('vc:state',{phase:this.recorder.state.phase,elapsed:this.recorder.snapshot().elapsed,shortcuts:this.recorder.state.shortcuts||{}});
     if(!LIVE.has(this.recorder.state.phase))this.closeControls();
   }
 
@@ -750,7 +826,9 @@ class Surfaces{
       openPicker:[['bar'],(_w,mode)=>this.openPicker(mode,{intent:'record',origin:'bar'})],
       closeBar:[['bar'],()=>this.dismissBar()],
       countdownCancel:[['countdown'],()=>this.closeCountdown()],
-      controlsState:[['controls'],()=>{const s=this.recorder.snapshot();return {phase:s.phase,elapsed:s.elapsed,collapsed:!!this.controls?.spot?.collapsed};}],
+      controlsState:[['controls'],()=>{const s=this.recorder.snapshot();return {phase:s.phase,elapsed:s.elapsed,shortcuts:s.shortcuts||{},collapsed:!!this.controls?.spot?.collapsed};}],
+      restart:[['controls'],()=>this.restartTake()],
+      discard:[['controls'],()=>this.discardTake()],
       pause:[['controls'],()=>this.recorder.pause()],
       stop:[['controls'],()=>{this.closeControls();return this.recorder.stop().catch(e=>this.recorder.set({error:e.message})).finally(()=>this.showMain());}],
       expand:[['controls'],(_w,on)=>this.setExpanded(!!on)],
@@ -762,6 +840,8 @@ class Surfaces{
       panelStart:[['panel'],()=>this.panelStart()],
       panelPause:[['panel'],()=>this.recorder.pause()],
       panelStop:[['panel'],()=>{this.closePanel();return this.recorder.stop().catch(e=>this.recorder.set({error:e.message})).finally(()=>this.showMain());}],
+      panelRestart:[['panel'],()=>this.restartTake()],
+      panelDiscard:[['panel'],()=>this.discardTake()],
       panelMain:[['panel'],()=>{this.closePanel();this.showMain();}],
       panelClose:[['panel'],()=>this.closePanel()],
       panelResize:[['panel'],(_w,h)=>this.resizePanel(Number(h))],

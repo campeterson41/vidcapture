@@ -5,7 +5,8 @@
   const vc = window.vidcapture;
   const $ = (id) => document.getElementById(id);
   const sheet = $('sheet');
-  let state = null, tab = null, busy = false, openMenu = null;
+  let state = null, tab = null, busy = false, openMenu = null, confirming = null;
+  const shortcuts = () => (state && state.shortcuts) || {};
 
   const LIVE = new Set(['starting', 'recording', 'paused', 'stopping']);
   const READY = new Set(['idle', 'saved', 'error']);
@@ -35,7 +36,7 @@
 
   function targetTab(t) {
     if (!t) return 'screen';
-    return t.kind === 'window' ? 'window' : t.kind === 'region' ? 'area' : 'screen';
+    return t.kind === 'window' ? 'window' : t.kind === 'region' ? 'area' : t.kind === 'camera' ? 'camera' : 'screen';
   }
 
   async function act(fn) {
@@ -107,6 +108,27 @@
     $('draw-label').textContent = has ? 'Draw a different area' : 'Draw an area on screen';
   }
 
+  // Camera only: each camera is a row; choosing one records just that camera.
+  function renderCameras() {
+    const list = $('cameras'); list.replaceChildren();
+    const cams = state.devices.cameras || [];
+    const t = state.target, current = state.settings.camera;
+    if (!cams.length) { list.append(el('li', 'empty', 'No cameras found')); return; }
+    for (const c of cams) {
+      const on = !!t && t.kind === 'camera' && current === c.id;
+      const li = el('li');
+      const b = el('button', 'window-row'); b.type = 'button'; b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      const shot = el('span', 'mini'); shot.append(icon('camera'));
+      const text = el('span', 'window-text');
+      text.append(el('span', 'window-title', deviceLabel(c.name)));
+      b.append(shot, text);
+      if (on) b.append(icon('check', 'icon tick'));
+      b.dataset.focus = `camera:${c.id}`;
+      b.addEventListener('click', () => act(() => vc.panelChoose({ kind: 'camera', device: c.id })));
+      li.append(b); list.append(li);
+    }
+  }
+
   function setTab(next, user) {
     // A tab switch restores that tab's choice; while another action runs it
     // would be dropped, leaving the tab and the target out of step.
@@ -117,7 +139,7 @@
       b.setAttribute('aria-selected', on ? 'true' : 'false');
       b.tabIndex = on ? 0 : -1;
     }
-    for (const id of ['screen', 'window', 'area']) $(`source-${id}`).hidden = id !== tab;
+    for (const id of ['screen', 'window', 'area', 'camera']) $(`source-${id}`).hidden = id !== tab;
     // Switching tabs brings back that tab's last choice. Full screen falls back
     // to the display the panel opened on. Window and Area wait for the user.
     if (user && targetTab(state.target) !== tab) {
@@ -132,22 +154,26 @@
         act(() => vc.panelChoose({ kind: 'window', address: m.address }));
       } else if (tab === 'area' && m) {
         act(() => vc.panelChoose({ kind: 'region', x: m.x, y: m.y, width: m.width, height: m.height }));
+      } else if (tab === 'camera' && state.settings.camera !== 'none') {
+        act(() => vc.panelChoose({ kind: 'camera' }));
       }
     }
-    updateStart(); fit();
+    renderDevices(); updateStart(); fit();
   }
 
   function updateStart() {
     const t = state && state.target;
     const gone = !!t && t.kind === 'window' && t.available === false;
-    const ok = !!t && targetTab(t) === tab && !gone;
+    const noCamera = tab === 'camera' && state.settings.camera === 'none';
+    const ok = !!t && targetTab(t) === tab && !gone && !noCamera;
     const start = $('start');
     // Not tied to busy: act() already ignores clicks while a save runs, and a
     // gray flash on every settings change looked like an error.
     start.disabled = !ok || !!state.job?.running || !READY.has(state.phase);
+    start.title = shortcuts().record ? `Start recording (${shortcuts().record})` : '';
     const hint = $('hint');
     hint.textContent = state.job?.running ? 'Processing a recording. Start is available when it finishes.'
-      : ok || tab === 'area' ? '' : tab === 'window' ? (gone ? 'That window was closed. Choose another.' : 'Choose a window to record') : 'Choose a display to record';
+      : ok || tab === 'area' ? '' : tab === 'camera' ? 'Choose a camera to record' : tab === 'window' ? (gone ? 'That window was closed. Choose another.' : 'Choose a window to record') : 'Choose a display to record';
     hint.hidden = !hint.textContent;
   }
 
@@ -241,6 +267,8 @@
     }
     const camRows = ['cameraSize', 'cameraCorner', 'cameraLighting', 'cameraCorrection'];
     for (const k of camRows) document.querySelector(`.seg[data-key="${k}"]`).closest('.setting').hidden = s.camera === 'none';
+    // The bubble's size and corner mean nothing when only the camera is recorded.
+    for (const k of ['cameraSize', 'cameraCorner', 'cameraLighting', 'cameraCorrection']) if (tab === 'camera') document.querySelector(`.seg[data-key="${k}"]`).closest('.setting').hidden = true;
     // Lens correction exists only for cameras whose profile measured it.
     const profile = (d.cameras.find((c) => c.id === s.camera) || {}).profile;
     if (!(profile && profile.lensCorrection)) document.querySelector('.seg[data-key="cameraCorrection"]').closest('.setting').hidden = true;
@@ -254,9 +282,9 @@
     $('live-elapsed').textContent = format(state.elapsed);
     $('live-dot').classList.toggle('paused', paused);
     const t = state.target;
-    if (state.phase === 'starting') { $('live-what').textContent = 'Starting'; $('live-pause').disabled = true; $('live-stop').disabled = true; return; }
+    if (state.phase === 'starting') { $('live-what').textContent = 'Starting'; for (const id of ['live-pause', 'live-stop', 'live-restart', 'live-discard']) $(id).disabled = true; return; }
     const size = state.targetSize || t || {};
-    const what = !t ? 'the screen' : t.kind === 'window' ? (t.label || t.title || 'a window')
+    const what = !t ? 'the screen' : t.kind === 'camera' ? 'the camera' : t.kind === 'window' ? (t.label || t.title || 'a window')
       : t.kind === 'region' ? `an area, ${size.width} × ${size.height}`
       : /^eDP/.test(t.monitor || '') ? 'the laptop display'
       : tidyName(((state.monitors || []).find((m) => m.id === t.monitor) || {}).name || t.label || 'the screen');
@@ -265,7 +293,11 @@
     p.querySelector('use').setAttribute('href', paused ? '#i-play' : '#i-pause');
     p.querySelector('span').textContent = paused ? 'Resume' : 'Pause';
     p.disabled = state.phase === 'stopping';
+    p.title = shortcuts().pause ? `${paused ? 'Resume' : 'Pause'} (${shortcuts().pause})` : '';
     $('live-stop').disabled = state.phase === 'stopping';
+    $('live-stop').title = shortcuts().record ? `Stop and save (${shortcuts().record})` : '';
+    $('live-restart').disabled = $('live-discard').disabled = state.phase === 'stopping';
+    if (state.phase === 'stopping' && confirming) settle(false);
   }
 
   let lastKey = '';
@@ -286,7 +318,7 @@
     if (first || !tab) tab = state.tab || targetTab(state.target);
     // Rebuilt rows would otherwise drop keyboard focus to the page.
     const had = document.activeElement?.dataset?.focus;
-    renderDisplays(); renderWindows(); renderArea(); renderDevices();
+    renderDisplays(); renderWindows(); renderArea(); renderCameras(); renderDevices();
     if (had) document.querySelector(`[data-focus="${CSS.escape(had)}"]`)?.focus({ preventScroll: true });
     setTab(tab, false);
     showError(state.error || '');
@@ -376,10 +408,34 @@
   $('recordings').addEventListener('click', () => vc.panelMain());
   $('close').addEventListener('click', () => vc.panelClose());
   $('live-pause').addEventListener('click', () => act(() => vc.panelPause()));
+  // Restart and Delete take ask once more before throwing the take away.
+  const CONFIRM = {
+    restart: { text: 'Restart this take?', go: 'Restart', run: () => vc.panelRestart(), from: 'live-restart' },
+    discard: { text: 'Delete this take?', go: 'Delete', run: () => vc.panelDiscard(), from: 'live-discard' },
+  };
+  function ask(kind) {
+    confirming = kind;
+    $('live-confirm-text').textContent = CONFIRM[kind].text;
+    $('live-confirm-go').textContent = CONFIRM[kind].go;
+    $('live-actions').hidden = true; $('live-confirm').hidden = false;
+    $('live-confirm-go').focus(); fit();
+  }
+  function settle(go) {
+    const kind = confirming; if (!kind) return;
+    confirming = null;
+    $('live-confirm').hidden = true; $('live-actions').hidden = false; fit();
+    if (go) act(() => CONFIRM[kind].run());
+    else $(CONFIRM[kind].from).focus();
+  }
+  $('live-restart').addEventListener('click', () => ask('restart'));
+  $('live-discard').addEventListener('click', () => ask('discard'));
+  $('live-confirm-go').addEventListener('click', () => settle(true));
+  $('live-confirm-cancel').addEventListener('click', () => settle(false));
   $('live-stop').addEventListener('click', () => act(() => vc.panelStop()));
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
     if (openMenu) { closeMenus(true); return; }
+    if (confirming) { settle(false); return; }
     vc.panelClose();
   });
 

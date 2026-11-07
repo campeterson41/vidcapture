@@ -1,6 +1,7 @@
 import {HttpError,json,random,digest,now,escapeHtml,cookieToken,sameOrigin,readJson,formatBytes} from './util';
+import {sendMail} from './mail';
 
-export type Account = { id:string; email:string; password_hash:string|null; created_at:number; verified_at:number|null; quota_bytes:number; is_admin:number; disabled:number };
+export type Account = { id:string; email:string; password_hash:string|null; created_at:number; verified_at:number|null; quota_bytes:number; is_admin:number; disabled:number; notify_comments:number };
 type VideoRow = { id:string; share_id:string; title:string; object_key:string; upload_id:string|null; status:string; size:number; account_id:string|null };
 type Deps = { purge:(v:VideoRow)=>Promise<void> };
 
@@ -8,7 +9,7 @@ const SESSION_TTL = 30 * 86400;
 const TOKEN_TTL = { verify: 7 * 86400, reset: 3600, signin: 15 * 60 } as const;
 const PBKDF2_ITERATIONS = 100000; // Workers' WebCrypto maximum for PBKDF2.
 // Self-hosted deployments set EMAIL_FROM to an address on their own Email Sending domain.
-const sender = (env: Env) => ({ email: (env as { EMAIL_FROM?: string }).EMAIL_FROM || 'no-reply@vidcapture.stream', name: 'VidCapture' });
+export const sender = (env: Env) => ({ email: (env as { EMAIL_FROM?: string }).EMAIL_FROM || 'no-reply@vidcapture.stream', name: 'VidCapture' });
 
 // ---------- Passwords ----------
 const b64 = (bytes:Uint8Array)=>btoa(String.fromCharCode(...bytes));
@@ -56,9 +57,9 @@ export async function startSession(env:Env,accountId:string){
 const endSession='__Host-vc=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0';
 
 // ---------- Email ----------
-function emailHtml(heading:string,body:string,button:string,link:string){
+export function emailHtml(heading:string,body:string,button:string,link:string,footer='If you did not ask for this, you can ignore this email.'){
  const href=escapeHtml(link);
- return `<!doctype html><html><body style="margin:0;background:#f6f5f1;font-family:Inter,Segoe UI,Arial,sans-serif;color:#242823"><div style="max-width:480px;margin:0 auto;padding:40px 24px"><p style="font-size:18px;font-weight:600;margin:0 0 16px">${escapeHtml(heading)}</p><p style="font-size:15px;line-height:1.6;margin:0 0 24px">${escapeHtml(body)}</p><p style="margin:0 0 28px"><a href="${href}" style="display:inline-block;background:#375b43;color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;padding:12px 22px;border-radius:8px">${escapeHtml(button)}</a></p><p style="font-size:13px;line-height:1.6;color:#73786e;margin:0">If you did not ask for this, you can ignore this email.</p></div></body></html>`;
+ return `<!doctype html><html><body style="margin:0;background:#f6f5f1;font-family:Inter,Segoe UI,Arial,sans-serif;color:#242823"><div style="max-width:480px;margin:0 auto;padding:40px 24px"><p style="font-size:18px;font-weight:600;margin:0 0 16px">${escapeHtml(heading)}</p><p style="font-size:15px;line-height:1.6;margin:0 0 24px">${escapeHtml(body)}</p><p style="margin:0 0 28px"><a href="${href}" style="display:inline-block;background:#375b43;color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;padding:12px 22px;border-radius:8px">${escapeHtml(button)}</a></p><p style="font-size:13px;line-height:1.6;color:#73786e;margin:0">${escapeHtml(footer)}</p></div></body></html>`;
 }
 async function emailToken(env:Env,account:Account,purpose:keyof typeof TOKEN_TTL){
  const token=random();
@@ -69,7 +70,7 @@ async function emailToken(env:Env,account:Account,purpose:keyof typeof TOKEN_TTL
   signin:{path:'/connect',subject:'Sign in to VidCapture',heading:'Sign in to VidCapture',body:'Use this link to open your video library. It works once and expires in 15 minutes.',button:'Open my library'},
  }[purpose];
  const link=`${env.SITE_ORIGIN}${copy.path}#${token}`;
- try{const sent=await env.EMAIL.send({from:sender(env),to:account.email,subject:copy.subject,text:`${copy.body}\n\n${link}\n\nIf you did not ask for this, you can ignore this email.`,html:emailHtml(copy.heading,copy.body,copy.button,link)});console.log(JSON.stringify({event:'email-sent',purpose,messageId:sent?.messageId??null}));}
+ try{const sent=await sendMail(env,{from:sender(env),to:account.email,subject:copy.subject,text:`${copy.body}\n\n${link}\n\nIf you did not ask for this, you can ignore this email.`,html:emailHtml(copy.heading,copy.body,copy.button,link)});console.log(JSON.stringify({event:'email-sent',purpose,messageId:sent.messageId}));}
  catch(error){console.error(JSON.stringify({event:'email-failed',purpose,error:error instanceof Error?error.message:'Unknown error'}));throw new HttpError(502,'The email could not be sent. Try again in a minute.');}
 }
 async function useToken(env:Env,token:unknown,purpose:string){
@@ -91,7 +92,7 @@ export async function accountRoutes(request:Request,env:Env,url:URL,deps:Deps):P
   await limit(env,'signup-ip',ip(request),5,3600,'Too many new accounts from this network. Try again later.');
   await limit(env,'signup-all','all',300,3600,'Sign-ups are paused for a moment. Try again shortly.');
   if(await env.DB.prepare('SELECT id FROM accounts WHERE email=?').bind(email).first())throw new HttpError(409,'An account with this email already exists. Log in instead.');
-  const account:Account={id:crypto.randomUUID(),email,password_hash:await hashPassword(password),created_at:now(),verified_at:null,quota_bytes:5*1024**3,is_admin:0,disabled:0};
+  const account:Account={id:crypto.randomUUID(),email,password_hash:await hashPassword(password),created_at:now(),verified_at:null,quota_bytes:5*1024**3,is_admin:0,disabled:0,notify_comments:1};
   await env.DB.prepare('INSERT INTO accounts(id,email,password_hash,created_at) VALUES(?,?,?,?)').bind(account.id,email,account.password_hash,account.created_at).run();
   await emailToken(env,account,'verify');
   return json({ok:true,email,verified:false},200,{'Set-Cookie':await startSession(env,account.id)});
@@ -142,7 +143,12 @@ export async function accountRoutes(request:Request,env:Env,url:URL,deps:Deps):P
  if(path==='/api/me'&&method==='GET'){
   const account=await requireAccount(request,env);
   const devices=(await env.DB.prepare("SELECT rowid AS id,name,created_at AS createdAt FROM devices WHERE account_id=? AND revoked=0 AND website=0 ORDER BY created_at").bind(account.id).all()).results;
-  return json({email:account.email,verified:!!account.verified_at,usedBytes:await usedBytes(env,account.id),quotaBytes:account.quota_bytes,isAdmin:!!account.is_admin,hasPassword:!!account.password_hash,devices});
+  return json({email:account.email,verified:!!account.verified_at,usedBytes:await usedBytes(env,account.id),quotaBytes:account.quota_bytes,isAdmin:!!account.is_admin,hasPassword:!!account.password_hash,notifyComments:account.notify_comments!==0,devices});
+ }
+ if(path==='/api/account/notifications'&&method==='POST'){
+  sameOrigin(request);const account=await requireAccount(request,env),body=await readJson(request);
+  if(typeof body.comments!=='boolean')throw new HttpError(400,'Choose on or off.');
+  await env.DB.prepare('UPDATE accounts SET notify_comments=? WHERE id=?').bind(body.comments?1:0,account.id).run();return json({notifyComments:body.comments});
  }
  if(path==='/api/account/password'&&method==='POST'){
   const account=await requireAccount(request,env),body=await readJson(request),password=validPassword(body.password);

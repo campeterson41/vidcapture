@@ -109,3 +109,33 @@
  if(video&&t>0){const go=()=>{video.currentTime=Math.min(t,video.duration||t);};if(video.readyState>=1)go();else video.addEventListener('loadedmetadata',go,{once:true});}
  load();
 })();
+
+// Reactions: count per emoji, sent at the current moment. During playback, reactions
+// rise briefly over the video at the moment they were left.
+(()=>{
+ const box=document.getElementById('reactions'),video=document.getElementById('watch-video');if(!box||!video)return;
+ const share=box.dataset.share,stage=document.querySelector('.video-stage');let moments=[],last=0;
+ const names={'👍':'Thumbs up','❤️':'Love','😂':'Funny','🎉':'Celebrate','👀':'Watching','🤔':'Thinking'};
+ function float(emoji){if(!stage||matchMedia('(prefers-reduced-motion: reduce)').matches)return;const e=document.createElement('span');e.className='reaction-float';e.textContent=emoji;e.setAttribute('aria-hidden','true');e.style.left=`${8+Math.random()*10}%`;stage.append(e);setTimeout(()=>e.remove(),2200);}
+ function draw(data){
+  box.replaceChildren(...data.emoji.map(emoji=>{const b=document.createElement('button');b.type='button';b.className='reaction';b.dataset.emoji=emoji;const n=data.counts[emoji]||0;b.setAttribute('aria-label',`${names[emoji]||emoji}, ${n}`);b.title=`React with ${names[emoji]||emoji} at this moment`;
+   const glyph=document.createElement('span');glyph.textContent=emoji;glyph.setAttribute('aria-hidden','true');const count=document.createElement('span');count.className='reaction-count';count.textContent=n?String(n):'';b.append(glyph,count);
+   b.onclick=async()=>{b.disabled=true;try{const r=await fetch('/api/reactions/'+share,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({emoji,at:video.currentTime||0})});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||'Could not send that reaction.');data.counts[emoji]=(data.counts[emoji]||0)+1;moments.push({emoji,at:video.currentTime});float(emoji);draw(data);}catch(error){const t=document.getElementById('toast');if(t){t.textContent=error.message;t.hidden=false;setTimeout(()=>t.hidden=true,3500);}b.disabled=false;}};
+   return b;}));
+ }
+ video.addEventListener('timeupdate',()=>{const t=video.currentTime;if(!video.paused&&t>last&&t-last<1.5)for(const m of moments)if(m.at>last&&m.at<=t)float(m.emoji);last=t;});
+ fetch('/api/reactions/'+share,{credentials:'same-origin'}).then(r=>r.ok?r.json():Promise.reject()).then(d=>{moments=d.moments;draw(d);}).catch(()=>{box.hidden=true;});
+})();
+
+// Owner: make the current frame the video's preview image and link card.
+(()=>{
+ const b=document.getElementById('use-frame'),video=document.getElementById('watch-video');if(!b||!video)return;
+ b.onclick=async()=>{
+  const label=b.textContent;b.disabled=true;b.textContent='Saving preview…';
+  try{
+   const {makePreview}=await import('/preview.js'),p=await makePreview('/media/'+b.dataset.share,{start:video.currentTime||0});
+   for(const [kind,type,body] of [['thumbnail','image/gif',p.gif],['poster','image/jpeg',p.poster]]){const r=await fetch(`/api/admin/videos/${b.dataset.video}/${kind}`,{method:'PUT',credentials:'same-origin',headers:{'Content-Type':type},body});if(!r.ok)throw new Error((await r.json().catch(()=>({}))).error||'The preview could not be saved.');}
+   video.poster='/thumbnail/'+b.dataset.share+'.jpg?'+Date.now();b.textContent='Preview updated';setTimeout(()=>{b.textContent=label;b.disabled=false;},2500);
+  }catch(error){b.textContent=label;b.disabled=false;const t=document.getElementById('toast');if(t){t.textContent=error.message;t.hidden=false;setTimeout(()=>t.hidden=true,3500);}}
+ };
+})();

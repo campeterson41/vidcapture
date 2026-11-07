@@ -117,6 +117,12 @@
   // else another monitor. Full display: another monitor, else a small dot in
   // the corner away from the camera bubble (it then appears in the recording).
   function pillPlacement({ target, monitors, pill, dot = { width: 28, height: 28 }, gap = 16, margin = 12, cameraCorner = 'bottom-right' }) {
+    // A camera-only take records no screen, so the controls sit at the bottom
+    // of the laptop display.
+    if (target.kind === 'camera') {
+      const m = monitors.find((x) => x.internal) || monitors[0];
+      if (m) return { ...bottomCenter(m, pill, margin), collapsed: false, recorded: false };
+    }
     const home = targetMonitor(target, monitors);
     if (target.kind !== 'monitor' && home) {
       const area = usable(home, margin);

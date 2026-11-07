@@ -196,6 +196,13 @@ body.controls { display: grid; }
 body[data-phase="paused"] .live-dot { background: var(--faint); }
 .elapsed { font-size: 14px; }
 .pill .icon-btn { width: 36px; height: 36px; border-radius: 18px; }
+.pill-main, .pill-confirm { display: flex; align-items: center; gap: 4px; flex: 1; height: 100%; min-width: 0; }
+.pill-confirm { padding-left: 10px; }
+.confirm-text { flex: 1; min-width: 0; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pill-btn { height: 34px; padding: 0 14px; border: 0; border-radius: 17px; background: var(--raised); font-size: 13px; font-weight: 500; }
+.pill-btn:hover { background: var(--raised-hover); }
+.pill-btn.danger { background: var(--rec-solid); color: var(--rec-ink); font-weight: 600; }
+.pill-btn.danger:hover { background: var(--rec-solid-hover); }
 .stop { background: var(--rec); color: var(--rec-ink); }
 .stop:hover { background: var(--rec-hover); color: var(--rec-ink); }
 .stop .icon { fill: currentColor; stroke: none; width: 14px; height: 14px; }
@@ -248,7 +255,7 @@ body.busy { cursor: progress; }
 .text-btn:hover { background: var(--raised); color: var(--text); }
 .text-btn .icon { width: 16px; height: 16px; }
 
-.tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; padding: 3px; border-radius: 10px; background: var(--bar); }
+.tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; padding: 3px; border-radius: 10px; background: var(--bar); }
 .tabs button {
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
   height: 50px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font-size: 12.5px;
@@ -394,7 +401,11 @@ body.busy { cursor: progress; }
 .quiet-btn:hover { background: var(--raised-hover); }
 .stop-btn { background: var(--rec-solid); color: var(--rec-ink); font-weight: 600; }
 .stop-btn:hover { background: var(--rec-solid-hover); }
-.quiet-btn:disabled, .stop-btn:disabled { opacity: 0.5; cursor: default; }
+.quiet-btn:disabled, .stop-btn:disabled, .plain-btn:disabled { opacity: 0.5; cursor: default; }
+.plain-btn { display: flex; align-items: center; justify-content: center; gap: 8px; height: 36px; border: 0; border-radius: 10px; background: transparent; color: var(--muted); font-size: 13px; }
+.plain-btn:hover { background: var(--raised); color: var(--text); }
+.plain-btn .icon { width: 16px; height: 16px; }
+.live-confirm-text { margin: 6px 0 2px; text-align: center; font-size: 13.5px; }
 @media (prefers-reduced-motion: reduce) { .live-time .rec-dot { animation: none; } .toggle-row input::after { transition: none; } }
 /* Slim scrollbars without arrow buttons. */
 .scroll::-webkit-scrollbar, .windows::-webkit-scrollbar, .menu::-webkit-scrollbar { width: 8px; }

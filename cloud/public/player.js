@@ -24,6 +24,11 @@
  try{const saved=localStorage.getItem('vidcapture-speed');if([...speed.options].some(o=>o.value===saved))speed.value=saved;}catch{}
  fullscreen.onclick=()=>void toggleFullscreen();fullscreen.hidden=!document.fullscreenEnabled&&!video.webkitEnterFullscreen;
  document.addEventListener('fullscreenchange',()=>{const full=document.fullscreenElement===root;root.classList.toggle('is-fullscreen',full);label(fullscreen,full?'Exit fullscreen (F)':'Fullscreen (F)');});
+ // Captions: off until turned on, then remembered.
+ const cc=get('player-cc'),track=video.textTracks[0];cc.hidden=!track;
+ function setCaptions(on){if(!track)return;track.mode=on?'showing':'hidden';root.classList.toggle('has-captions',on);cc.setAttribute('aria-pressed',String(on));label(cc,on?'Turn captions off (C)':'Captions (C)');try{localStorage.setItem('vidcapture-captions',on?'1':'0');}catch{}}
+ if(track){let saved='0';try{saved=localStorage.getItem('vidcapture-captions')||'0';}catch{}setCaptions(saved==='1');}
+ cc.onclick=()=>setCaptions(track?.mode!=='showing');
  pip.hidden=!document.pictureInPictureEnabled||!video.requestPictureInPicture;
  pip.onclick=async()=>{try{if(document.pictureInPictureElement===video)await document.exitPictureInPicture();else await video.requestPictureInPicture();}catch{announce('Picture in picture is not available right now.');}};
  video.addEventListener('enterpictureinpicture',()=>label(pip,'Exit picture in picture'));video.addEventListener('leavepictureinpicture',()=>label(pip,'Picture in picture'));
@@ -38,7 +43,7 @@
   if(event.altKey||event.ctrlKey||event.metaKey||event.target.closest('input,select,textarea'))return;
   if((event.key===' '||event.key==='Enter')&&event.target.closest('button'))return;
   const key=event.key.toLowerCase();
-  if(key===' '||key==='k')togglePlay();else if(key==='arrowleft')jump(-5);else if(key==='arrowright')jump(5);else if(key==='j')jump(-10);else if(key==='l')jump(10);else if(key==='m')toggleMute();else if(key==='f')void toggleFullscreen();else if(key==='home'){video.currentTime=0;}else if(key==='end'&&duration()){video.currentTime=duration();}else return;
+  if(key===' '||key==='k')togglePlay();else if(key==='arrowleft')jump(-5);else if(key==='arrowright')jump(5);else if(key==='j')jump(-10);else if(key==='l')jump(10);else if(key==='m')toggleMute();else if(key==='f')void toggleFullscreen();else if(key==='c'&&track)setCaptions(track.mode!=='showing');else if(key==='home'){video.currentTime=0;}else if(key==='end'&&duration()){video.currentTime=duration();}else return;
   event.preventDefault();
  });
  for(const name of ['play','pause','ended'])video.addEventListener(name,updatePlayback);

@@ -209,3 +209,37 @@ test('a link to another site is never opened during connection',async()=>{
   publisher.publish(f.file,'Fixture');const {error}=await f.media.task;assert.match(error.message,/Invalid connection/);assert.deepEqual(opened,[]);
  }finally{await fs.rm(f.root,{recursive:true,force:true});}
 });
+
+test('captions for the shared cut upload after the video completes',async()=>{
+  const f=await fixture(2);const s=service(f.size);const captions=[];
+  const fetch=async(url,options)=>{
+    const route=url.slice(ORIGIN.length);
+    if(/\/captions$/.test(route)){assert.equal(s.completed,1,'after complete');assert.equal(options.method,'PUT');assert.equal(options.headers['Content-Type'],'text/vtt');captions.push(String(options.body));return new Response('{"ok":true}');}
+    return s.fetch(url,options);
+  };
+  // The fixture's whole duration is kept, so no edited copy is made.
+  const transcript=async file=>{assert.equal(file,f.file);return {transcript:{words:[{text:'Hello',start:1,end:1.4},{text:'world.',start:1.5,end:2}]}};};
+  const publisher=new Publisher(f.rec,f.media,{fetch,transcript});
+  publisher.publish(f.file,'Fixture');const result=await f.media.task;
+  assert.equal(result.error,undefined);assert.equal(captions.length,1);
+  assert.ok(captions[0].startsWith('WEBVTT'));assert.match(captions[0],/00:00:01\.000 --> 00:00:02\.000\nHello world\./);
+  await fs.rm(f.root,{recursive:true,force:true});
+});
+
+test('a failed caption upload does not fail the share',async()=>{
+  const f=await fixture(2);const s=service(f.size);const logged=[];
+  const fetch=async(url,options)=>/\/captions$/.test(url)?new Response('{"error":"Too large."}',{status:413}):s.fetch(url,options);
+  const publisher=new Publisher(f.rec,f.media,{fetch,transcript:async()=>({transcript:{words:[{text:'Hi.',start:0,end:1}]}}),log:(...a)=>logged.push(a.join(' '))});
+  publisher.publish(f.file,'Fixture');const result=await f.media.task;
+  assert.equal(result.error,undefined);assert.equal(f.rec.state.share.url,`${ORIGIN}/v/${SHARE}`);
+  assert.equal(logged.length,1);assert.match(logged[0],/Too large/);
+  await fs.rm(f.root,{recursive:true,force:true});
+});
+
+test('no transcript means no caption request',async()=>{
+  const f=await fixture(2);const s=service(f.size);
+  const publisher=new Publisher(f.rec,f.media,{fetch:s.fetch,transcript:async()=>({transcript:null})});
+  publisher.publish(f.file,'Fixture');const result=await f.media.task;
+  assert.equal(result.error,undefined);
+  await fs.rm(f.root,{recursive:true,force:true});
+});

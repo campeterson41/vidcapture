@@ -39,3 +39,6 @@ X-Capture-Owned=true
 EOF
 command -v update-desktop-database >/dev/null && update-desktop-database "$capture_home/.local/share/applications"
 echo "Installed VidCapture in the app launcher."
+# Start/stop and pause shortcuts, only on keys no other binding uses.
+# CAPTURE_NO_HOTKEYS=1 skips this step.
+/usr/bin/node "$capture_source/hotkeys.cjs" install "$capture_home" "$capture_launcher" || echo "Shortcuts were not added." >&2

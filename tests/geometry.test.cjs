@@ -67,7 +67,7 @@ test('region ids round-trip through the recorder parser',()=>{
   assert.deepEqual(parseRegion(G.regionId(r).slice(7)),{kind:'region',...r,label:`Selected area (${r.width} × ${r.height})`});
 });
 
-const PILL={width:212,height:44};
+const PILL={width:300,height:44};
 const overlaps=(a,b)=>a.x<b.x+b.width&&b.x<a.x+a.width&&a.y<b.y+b.height&&b.y<a.y+a.height;
 
 test('controls go beside a window or area on the same display when there is room',()=>{
@@ -75,7 +75,7 @@ test('controls go beside a window or area on the same display when there is room
   const spot=G.pillPlacement({target,monitors,pill:PILL});
   assert.equal(spot.monitor,'eDP-1');assert.equal(spot.collapsed,false);
   assert.ok(!overlaps(spot,target));
-  assert.deepEqual([spot.x,spot.y],[394,516]);
+  assert.deepEqual([spot.x,spot.y],[350,516]);
   // A crop that reaches the bottom puts the controls above it, below the bar.
   const low={kind:'window',x:100,y:300,width:900,height:408};
   const above=G.pillPlacement({target:low,monitors,pill:PILL});
@@ -113,4 +113,11 @@ test('panel drops down under the bar near its icon and stays on screen',()=>{
   assert.equal(G.panelPlacement(m,{width:360,height:600}).x,1280+3440-8-360);
   assert.equal(G.panelPlacement(m,{width:360,height:600},10).x,1288);
   assert.equal(G.panelPlacement({...m,height:500},{width:360,height:900}).height,500-26-12);
+});
+
+test('camera-only controls sit at the bottom of the laptop display, never collapsed',()=>{
+  const spot=G.pillPlacement({target:{kind:'camera'},monitors,pill:PILL});
+  const laptop=monitors.find(m=>m.internal)||monitors[0];
+  assert.equal(spot.monitor,laptop.id);assert.equal(spot.collapsed,false);assert.equal(spot.width,PILL.width);
+  assert.ok(spot.x>=laptop.x&&spot.x+spot.width<=laptop.x+laptop.width&&spot.y+spot.height<=laptop.y+laptop.height);
 });

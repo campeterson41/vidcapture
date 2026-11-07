@@ -9,7 +9,7 @@ const {validImageName}=require('./camera-effects.cjs');
 const path = require('node:path');
 const os = require('node:os');
 const net = require('node:net');
-const {cameraMode,cameraShader,cameraCommand}=require('./camera.cjs');
+const {cameraMode,cameraRecordMode,cameraShader,cameraCommand}=require('./camera.cjs');
 const {cameraKey}=require('./camera-settings.cjs');
 const {publicProfile}=require('./camera-profiles.cjs');
 const {selectedWindow,windowTarget,matchingWindow,containingMonitor,physicalRegion}=require('./tracking.cjs');
@@ -19,6 +19,11 @@ const ACTIVE = new Set(['selecting','starting','recording','paused','stopping'])
 // Any finished video in the recordings folder; partial saves and hidden work
 // folders are skipped.
 function isRecordingName(name){return typeof name==='string'&&!name.startsWith('.')&&/\.(mp4|mkv)$/i.test(name)&&!name.endsWith('.saving.mp4');}
+
+// The raw file a take writes: Capture-<timestamp>.mkv directly in the recordings folder.
+function takeFile(file,outputDir){
+  return typeof file==='string'&&path.dirname(file)===outputDir&&/^Capture-[0-9TZ-]+\.mkv$/.test(path.basename(file));
+}
 
 const DEFAULTS = {microphone:'default_input',systemAudio:false,camera:'none',cameraSize:'small',cameraCorner:'bottom-right',cameraCorrection:'computer',cameraLighting:'original',fps:30,quality:'high',resolution:'1920x1080',countdown:3,micNoise:'off',micGate:'off',micRumble:false,micBackup:true,cameraBackground:'off',cameraBlur:'medium',cameraBackgroundImage:''};
 
@@ -51,8 +56,18 @@ function parseRegion(text) {
 // clean is the live cleanup source (audio-chain.cjs) when it is on; the raw
 // microphone is then added as a final backup track if micBackup is set.
 function buildArgs(target, settings, output, clean=null) {
-  const args = target.kind==='monitor' ? ['-w',target.monitor] : ['-w',`${target.width}x${target.height}+${target.x}+${target.y}`];
-  args.push('-s',settings.resolution,'-k','h264','-f',String(settings.fps),'-fm','vfr','-q',settings.quality,'-fallback-cpu-encoding','yes','-o',output);
+  let args;
+  if(target.kind==='camera'){
+    // Camera only: GPU Screen Recorder reads the camera itself, full frame.
+    const m=target.mode||{};
+    if(!/^\/dev\/video\d+$/.test(String(target.device)))throw new Error('Choose a camera first.');
+    const opts=m.width&&m.height?`;camera_width=${m.width};camera_height=${m.height};camera_fps=${m.fps||30};pixfmt=${m.pixfmt||'auto'}`:'';
+    args=['-w',target.device+opts,'-s',m.width&&m.height?`${m.width}x${m.height}`:settings.resolution,'-k','h264','-f',String(m.fps||30)];
+  }else{
+    args = target.kind==='monitor' ? ['-w',target.monitor] : ['-w',`${target.width}x${target.height}+${target.x}+${target.y}`];
+    args.push('-s',settings.resolution,'-k','h264','-f',String(settings.fps));
+  }
+  args.push('-fm','vfr','-q',settings.quality,'-fallback-cpu-encoding','yes','-o',output);
   const audio=[];
   if(settings.systemAudio) audio.push('default_output');
   const raw=settings.microphone==='default_input'?'default_input':`device:${settings.microphone}`;
@@ -195,6 +210,11 @@ class Recorder extends EventEmitter {
       await this.unmarkWindow();
       return this.set({phase:'idle',error:null,target:region});
     }
+    // Camera only: no screen. The camera is the one chosen in the camera setting.
+    if(id==='camera'){
+      await this.unmarkWindow();
+      return this.set({phase:'idle',error:null,target:{kind:'camera',label:'Camera'}});
+    }
     if(id!=='region' && id!=='window') {
       await this.refreshDevices();
       const m=this.state.devices.monitors.find(m=>m.id===id);
@@ -273,10 +293,16 @@ class Recorder extends EventEmitter {
     await fs.writeFile(pending,values.join(' ')+'\n',{mode:0o600});
     await fs.rename(pending,this.followFile);
   }
+  // Where the camera bubble sits. A camera-only take has no screen area, so its
+  // preview shows on the laptop display.
+  bubbleTarget() {
+    const t=this.state.target;
+    return (t&&t.kind!=='camera'?t:null)||this.state.devices.monitors.find(m=>m.id.startsWith('eDP'))||this.state.devices.monitors[0];
+  }
   async positionCamera(verify=false,knownClients=null) {
     if(!this.camera||!this.cameraAddress)return;
     const camera=this.camera;
-    const target=this.state.target||(this.state.devices.monitors.find(m=>m.id.startsWith('eDP'))||this.state.devices.monitors[0]);
+    const target=this.bubbleTarget();
     if(!target)return;
     let geom=cameraGeometry(target,this.state.settings.cameraSize,this.state.settings.cameraCorner,this.cameraPlacement);
     const monitor=containingMonitor(this.state.devices.monitors,target);
@@ -325,17 +351,11 @@ class Recorder extends EventEmitter {
     if(this.camera) {await this.closeCamera();return this.publish();}
     await this.openCamera();return this.publish();
   }
-  async openCamera() {
-    if(this.state.settings.camera==='none') throw new Error('Choose a camera first.');
-    await this.closeCamera();
-    const target=this.state.target||(this.state.devices.monitors.find(m=>m.id.startsWith('eDP'))||this.state.devices.monitors[0]);
-    if(!target) throw new Error('Choose an area or display for the camera.');
-    if(target.width<90 || target.height<90) throw new Error('Choose a larger recording area to fit the camera.');
-    const formats=await run('v4l2-ctl',['-d',this.state.settings.camera,'--list-formats-ext'],{timeout:5000});
-    const mode=cameraMode(formats.stdout),circle=mode.circle;
-    // A camera profile, when one matches this model, adds vendor commands, lens
-    // correction and the Intel GPU decoder. Other cameras use none of these.
-    const device=this.state.settings.camera;
+  // A camera profile, when one matches this model, adds vendor commands, lens
+  // correction and the Intel GPU decoder. Other cameras use none of these.
+  // Camera controls chosen in Studio settings (exposure, white balance and so
+  // on) apply too; a camera that refuses one keeps its own value.
+  async prepareCamera(device) {
     let profile=null;
     if(this.cameraProfiles){
       const key=this.cameraKeys.get(device)||await cameraKey(device).catch(()=>null);
@@ -349,10 +369,20 @@ class Recorder extends EventEmitter {
         processing.extensionUnit=JSON.parse((await job).stdout);
       }catch(e){throw new Error(`The ${profile.name} profile could not be applied. ${e.stderr?.trim()||e.message}`);}
     }
+    if(this.cameraSettings)await this.cameraSettings.apply(device).catch(()=>{});
+    return {profile,processing};
+  }
+  async openCamera() {
+    if(this.state.settings.camera==='none') throw new Error('Choose a camera first.');
+    await this.closeCamera();
+    const target=this.bubbleTarget();
+    if(!target) throw new Error('Choose an area or display for the camera.');
+    if(target.width<90 || target.height<90) throw new Error('Choose a larger recording area to fit the camera.');
+    const formats=await run('v4l2-ctl',['-d',this.state.settings.camera,'--list-formats-ext'],{timeout:5000});
+    const mode=cameraMode(formats.stdout),circle=mode.circle;
+    const device=this.state.settings.camera;
+    const {profile,processing}=await this.prepareCamera(device);
     const correction=profile?.lensCorrection&&this.state.settings.cameraCorrection==='computer'?profile.lensCorrection:null;
-    // Camera controls chosen in Studio settings (exposure, white balance and so on).
-    // A camera that refuses one keeps its own value; the take still starts.
-    if(this.cameraSettings)await this.cameraSettings.apply(this.state.settings.camera).catch(()=>{});
     // Background blur or replacement runs in a separate GPU process (camera-effects.cjs).
     // If it was chosen and cannot run, the camera does not open: a take must never
     // show a background that was meant to be hidden.
@@ -512,13 +542,31 @@ class Recorder extends EventEmitter {
     await this.refreshDevices();
     validateSettings(this.state.settings,DEFAULTS,this.state.devices);
     if(this.state.target.kind==='window')await this.updateWindow(true);
-    const target=this.state.target;
+    let target=this.state.target;
+    const cameraOnly=target.kind==='camera';
+    if(cameraOnly){
+      const device=this.state.settings.camera;
+      if(device==='none'||!this.state.devices.cameras.some(c=>c.id===device))throw new Error('Choose a camera first.');
+      // The recorder reads the camera directly, so the bubble's effects cannot apply.
+      if(this.state.settings.cameraBackground!=='off')throw new Error('Background effects are not available when recording only the camera. Turn the background off.');
+    }
     if(target.kind==='window'&&!target.available)throw new Error('The selected window is not visible. Select it again.');
-    if(!this.state.devices.monitors.some(m=>target.x>=m.x&&target.y>=m.y&&target.x+target.width<=m.x+m.width+1&&target.y+target.height<=m.y+m.height+1))throw new Error('The selected area no longer fits a connected display. Select it again.');
+    if(!cameraOnly&&!this.state.devices.monitors.some(m=>target.x>=m.x&&target.y>=m.y&&target.x+target.width<=m.x+m.width+1&&target.y+target.height<=m.y+m.height+1))throw new Error('The selected area no longer fits a connected display. Select it again.');
     const disk=await fs.statfs(this.outputDir);if(disk.bavail*disk.bsize<1024**3)throw new Error('Less than 1 GB is free. Free some space before recording.');
     this.started=0;this.pausedAt=0;this.pauseTotal=0;this.log='';this.set({phase:'starting',error:null,elapsed:0,lastFile:null});
     try {
-      if(this.state.settings.camera!=='none')await this.openCamera();else await this.closeCamera();
+      let recordTarget=target;
+      if(cameraOnly){
+        // The preview bubble must let go of the camera before the recorder opens it.
+        await this.closeCamera();
+        const device=this.state.settings.camera;
+        await this.prepareCamera(device);
+        const formats=await run('v4l2-ctl',['-d',device,'--list-formats-ext'],{timeout:5000});
+        const mode=cameraRecordMode(formats.stdout,this.state.settings.resolution);
+        if(!mode.width)throw new Error('This camera has no 30 fps mode to record.');
+        recordTarget={...target,device,mode};
+      }
+      else if(this.state.settings.camera!=='none')await this.openCamera();else await this.closeCamera();
       const stamp=new Date().toISOString().replace(/[:.]/g,'-');
       this.rawFile=path.join(this.outputDir,`Capture-${stamp}.mkv`);
       let engine='gpu-screen-recorder';
@@ -533,7 +581,7 @@ class Recorder extends EventEmitter {
       // silently records without the cleanup that was chosen.
       const clean=this.audioChain?await this.audioChain.ensure(this.state.settings):null;
       this.takeAudio={clean:!!clean,backup:!!(clean&&this.state.settings.microphone!=='none'&&this.state.settings.micBackup)};
-      const child=spawn(engine,buildArgs(target,this.state.settings,this.rawFile,clean),{stdio:['ignore','ignore','pipe'],env});
+      const child=spawn(engine,buildArgs(recordTarget,this.state.settings,this.rawFile,clean),{stdio:['ignore','ignore','pipe'],env});
       this.child=child;
       child.stderr.on('data',b=>{this.log=(this.log+b).slice(-32000);});
       this.exitPromise=new Promise(resolve=>{child.once('error',e=>{this.log+=e.message;resolve({code:1});});child.once('exit',(code,signal)=>resolve({code,signal}));});
@@ -570,6 +618,25 @@ class Recorder extends EventEmitter {
     if(!result){this.set({phase:this.pausedAt?'paused':'recording',error:'The recorder is taking longer to stop. Your file is preserved. Try Stop again.'});throw new Error(this.state.error);}
     return this.finish(result.code===0?null:'The recorder ended with an error. Your footage has been kept.');
   }
+  // Ends the take and deletes its file. Only this take's own recording is
+  // removed: the raw file the recorder was writing, never anything else.
+  async discard() {
+    if(!['recording','paused'].includes(this.state.phase)||!this.child)throw new Error('There is no recording to discard.');
+    const raw=this.rawFile;
+    this.set({phase:'stopping'});
+    this.child.kill('SIGINT');
+    let result=await Promise.race([this.exitPromise,delay(10000).then(()=>null)]);
+    if(!result&&this.child){this.child.kill('SIGKILL');result=await Promise.race([this.exitPromise,delay(3000).then(()=>null)]);}
+    await this.closeCamera();await this.writeLog().catch(()=>{});
+    this.child=null;this.rawFile=null;this.followMonitor=null;this.started=0;this.pausedAt=0;this.pauseTotal=0;
+    if(takeFile(raw,this.outputDir)){
+      await fs.rm(raw,{force:true});
+      await fs.rm(raw.replace(/\.mkv$/,'.saving.mp4'),{force:true});
+    }
+    await fs.rm(path.join(this.dataDir,'active.json'),{force:true});
+    await this.refreshRecent();
+    return this.set({phase:'idle',elapsed:0,lastFile:null,error:null,cameraPreview:false});
+  }
   async writeLog(){await fs.writeFile(path.join(this.dataDir,'recorder.log'),this.log,{mode:0o600});}
   async finish(warning=null) {
     if(this.finalizing)return this.finalizing;
@@ -595,7 +662,7 @@ class Recorder extends EventEmitter {
       // screen and app give the title writer context when nothing is said.
       await fs.writeFile(path.join(this.dataDir,path.basename(saved)+'.json'),JSON.stringify({settings:s,micTrack:s.microphone==='none'?null:(s.systemAudio?1:0),systemTrack:s.systemAudio?(s.microphone==='none'?0:2):null,
         rawMicTrack:this.takeAudio?.backup?(s.systemAudio?3:1):null,micCleanup:this.takeAudio?.clean?{noise:s.micNoise,gate:s.micGate,rumble:s.micRumble}:null,
-        recordedAt:new Date(this.started||Date.now()).toISOString(),screen:t?.kind==='window'?(t.label||null):t?.kind==='monitor'?(t.label||null):null,app:t?.kind==='window'?(t.class||null):null}),{mode:0o600});
+        recordedAt:new Date(this.started||Date.now()).toISOString(),...(t?.kind==='camera'?{source:'camera'}:{}),screen:t?.kind==='window'?(t.label||null):t?.kind==='monitor'?(t.label||null):null,app:t?.kind==='window'?(t.class||null):null}),{mode:0o600});
     }
     return this.set({phase:exists?'saved':'error',lastFile:exists?saved:null,error:error||(!exists?'No recording was saved.':null),cameraPreview:false});
   }
@@ -652,4 +719,4 @@ class Recorder extends EventEmitter {
   }
   async dispose(){this.disposed=true;clearInterval(this.followTimer);await this.unmarkWindow();clearInterval(this.timer);clearTimeout(this.deviceRefreshTimer);this.deviceWatcher?.close();await this.closeCamera();}
 }
-module.exports={Recorder,validateSettings,parseRegion,buildArgs,cameraGeometry,isRecordingName,DEFAULTS,ACTIVE};
+module.exports={Recorder,takeFile,validateSettings,parseRegion,buildArgs,cameraGeometry,isRecordingName,DEFAULTS,ACTIVE};

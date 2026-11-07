@@ -17,6 +17,7 @@ const {AudioChain}=require('./audio-chain.cjs');
 const {CameraSettings}=require('./camera-settings.cjs');
 const {CameraEffects}=require('./camera-effects.cjs');
 const {CameraProfiles}=require('./camera-profiles.cjs');
+const {shortcutsFrom}=require('./hotkeys.cjs');
 protocol.registerSchemesAsPrivileged([{scheme:'capture-media',privileges:{standard:true,secure:true,stream:true,supportFetchAPI:true}}]);
 app.setName('Capture');
 app.setPath('userData',path.join(app.getPath('appData'),'capture'));
@@ -33,7 +34,16 @@ if(!locked){app.quit();}else{
     return {screen:/^[A-Za-z0-9_.-]{1,40}$/.test(screen)?screen:null,x:Number.isFinite(x)&&x>=0&&x<20000?x:null};
   };
   const openPanel=args=>surfaces.openPanel(args||{}).catch(e=>{console.error(e);show();});
-  app.on('second-instance',(_event,argv)=>{const args=panelArgs(argv);if(args&&surfaces)openPanel(args);else show();});
+  // `capture --toggle-recording` and `capture --toggle-pause` come from the
+  // Hyprland shortcuts that install.sh adds (Electron's own global shortcuts
+  // do not work under Wayland).
+  const hotkey=argv=>argv.includes('--toggle-recording')?'record':argv.includes('--toggle-pause')?'pause':null;
+  const runHotkey=kind=>(kind==='record'?surfaces.toggleRecording():surfaces.togglePause()).catch(e=>console.error('shortcut',e));
+  app.on('second-instance',(_event,argv)=>{
+    const key=hotkey(argv);
+    if(key){if(surfaces)runHotkey(key);return;}
+    const args=panelArgs(argv);if(args&&surfaces)openPanel(args);else show();
+  });
   async function requestClose(){
     if(closing)return;
     closing=true;
@@ -63,7 +73,7 @@ if(!locked){app.quit();}else{
     await recorder.cameraProfiles.load();
     await recorder.init();
     recorder.audioChain.ensure(recorder.state.settings).catch(()=>{});
-    media=new MediaTools(recorder);transcripts=new Transcripts(recorder,media);media.onEnhanced=output=>transcripts.carry(output);publisher=new Publisher(recorder,media,{openExternal:url=>shell.openExternal(url)});await publisher.init();
+    media=new MediaTools(recorder);transcripts=new Transcripts(recorder,media);media.onEnhanced=output=>transcripts.carry(output);publisher=new Publisher(recorder,media,{openExternal:url=>shell.openExternal(url),transcript:file=>transcripts.get(file)});await publisher.init();
     // New recordings are titled in the background and renamed once nothing has
     // them open. The editor's file counts as open until another file replaces it.
     // Any version of a recording open in the editor holds the whole set's rename.
@@ -122,7 +132,7 @@ if(!locked){app.quit();}else{
         if(recorder.state.settings.cameraBackgroundImage===name)await recorder.saveSettings({cameraBackgroundImage:'',...(recorder.state.settings.cameraBackground==='image'?{cameraBackground:'off'}:{})});
         await recorder.cameraEffects.removeImage(name);return studioInfo();
       },
-      setMicLevel:async percent=>{const mic=recorder.state.settings.microphone;if(mic==='none')throw new Error('Choose a microphone first.');await recorder.audioChain.setLevel(mic,percent);return studioInfo();},start:async()=>{win.hide();try{if(!(await surfaces.countdown())){show();return recorder.snapshot();}return await recorder.start();}catch(e){show();throw e;}},pause:()=>recorder.pause(),stop:()=>recorder.stop(),previewCamera:()=>recorder.previewCamera(),
+      setMicLevel:async percent=>{const mic=recorder.state.settings.microphone;if(mic==='none')throw new Error('Choose a microphone first.');await recorder.audioChain.setLevel(mic,percent);return studioInfo();},start:async()=>{win.hide();try{if(!(await surfaces.countdown())){show();return recorder.snapshot();}return await recorder.start();}catch(e){show();throw e;}},pause:()=>recorder.pause(),stop:()=>recorder.stop(),restart:()=>surfaces.restartTake(),discard:()=>surfaces.discardTake(),previewCamera:()=>recorder.previewCamera(),
       getMedia:file=>{editorFile=file;titles.applyRenames().catch(()=>{});return media.getMedia(file);},getWaveform:file=>media.getWaveform(file),saveEdits:(file,keep)=>media.saveEdits(file,keep),exportEdit:(file,keep)=>media.exportEdit(file,keep),enhanceAudio:file=>media.enhanceAudio(file),enhanceAudioFast:file=>media.enhanceAudioFast(file),enhanceAudioQuick:(file,options)=>media.enhanceAudioQuick(file,options),cancelJob:()=>{publisher.cancel();return media.cancelJob();},
       publishVideo:(file,title,keep)=>publisher.publish(file,title,keep),
       getTranscript:file=>transcripts.get(file),makeTranscript:file=>transcripts.create(file),cancelTranscript:()=>transcripts.cancel(),
@@ -217,6 +227,10 @@ if(!locked){app.quit();}else{
     });
     await win.loadFile(path.join(__dirname,'ui/index.html'));
     update(recorder.snapshot());
-    const startArgs=panelArgs(process.argv);if(startArgs)openPanel(startArgs);else show();
+    // Shortcut keys shown in tooltips: whatever Hyprland binds to the toggles.
+    // CAPTURE_TEST_BINDS (a JSON list like `hyprctl binds -j`) stands in for the live binds in isolated checks.
+    (process.env.CAPTURE_TEST_BINDS?Promise.resolve({stdout:process.env.CAPTURE_TEST_BINDS}):run('hyprctl',['binds','-j'],{timeout:3000})).then(({stdout})=>recorder.set({shortcuts:shortcutsFrom(JSON.parse(stdout))})).catch(()=>{});
+    const startKey=hotkey(process.argv),startArgs=panelArgs(process.argv);
+    if(startKey)runHotkey(startKey);else if(startArgs)openPanel(startArgs);else show();
   }).catch(e=>{console.error(e);dialog.showErrorBox('Capture could not open',e.message);allowQuit=true;app.quit();});
 }

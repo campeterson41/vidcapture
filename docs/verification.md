@@ -1,4 +1,14 @@
-# v0.1.0-alpha.3 verification
+# v0.1.0-alpha.4 verification
+
+Alpha.4 adds sharing, shortcut and recording changes to alpha.3. Alpha.4 checks:
+
+- 143 Node tests passed in the published snapshot by itself, including the new caption tests.
+- The snapshot passed the same allowlist and privacy audit as alpha.3.
+- On vidcapture.stream, account emails sent through Amazon SES reached a Gmail inbox with DKIM, SPF and DMARC passing.
+
+The hardware checks below were done for alpha.3 on the same day and were not repeated.
+
+## Alpha.3 checks
 
 Checked on November 7, 2026, on one Omarchy workstation: Hyprland 0.56.2, Electron 43.8.3, GPU Screen Recorder 6.1.4, FFmpeg 9.0.2, Intel graphics with an NVIDIA Quadro T2000 (driver 615.78.08). No other hardware compatibility is claimed.
 

@@ -1,5 +1,5 @@
 import {GIFEncoder,quantize,applyPalette} from './gifenc.js';
-export async function makePreview(source,{signal}={}){
+export async function makePreview(source,{signal,start=0}={}){
  const video=document.createElement('video'),local=source instanceof Blob,url=local?URL.createObjectURL(source):source;
  video.muted=true;video.playsInline=true;video.preload='auto';
  function wait(event,test,action){return new Promise((resolve,reject)=>{
@@ -13,7 +13,7 @@ export async function makePreview(source,{signal}={}){
   const scale=Math.min(640/video.videoWidth,400/video.videoHeight),w=video.videoWidth*scale,h=video.videoHeight*scale;
   for(let i=0;i<18;i++){
    if(signal?.aborted)throw new DOMException('Canceled','AbortError');
-   const time=Math.min(i/6,Math.max(0,video.duration-.05));
+   const time=Math.min(start+i/6,Math.max(0,video.duration-.05));
    if(Math.abs(video.currentTime-time)>.0001)await wait('seeked',()=>!video.seeking&&video.readyState>=2,()=>{video.currentTime=time;});
    context.fillStyle='#1a1917';context.fillRect(0,0,640,400);context.drawImage(video,(640-w)/2,(400-h)/2,w,h);
    context.fillStyle='rgba(55,91,67,.94)';context.beginPath();context.arc(320,200,46,0,2*Math.PI);context.fill();context.fillStyle='white';context.beginPath();context.moveTo(310,179);context.lineTo(310,221);context.lineTo(342,200);context.closePath();context.fill();

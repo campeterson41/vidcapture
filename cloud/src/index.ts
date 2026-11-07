@@ -6,7 +6,7 @@ import {type Account,accountRoutes,sessionAccount,startSession,emailSigninAccoun
 const CHUNK = 8 * 1024 * 1024;
 const MAX_SIZE = 20 * 1024 ** 3;
 const VIEW_WINDOW = 6 * 3600;
-type Video = { id:string; share_id:string; title:string; object_key:string; upload_id:string|null; status:string; size:number; duration:number; width:number; height:number; created_at:number; published_at:number|null; views:number; device_hash:string; account_id:string|null; thumbnail_ready:number; poster_hd:number; visibility:'public'|'private'; comments_enabled:number };
+type Video = { id:string; share_id:string; title:string; object_key:string; upload_id:string|null; status:string; size:number; duration:number; width:number; height:number; created_at:number; published_at:number|null; views:number; device_hash:string; account_id:string|null; thumbnail_ready:number; poster_hd:number; visibility:'public'|'private'; comments_enabled:number; captions:number };
 // Device tokens (desktop app) reach only that device's videos. Browser sessions reach the whole account.
 type Auth = { account:Account; device:string|null };
 function safeVisibility(value:unknown){if(value!=='public'&&value!=='private')throw new HttpError(400,'Visibility must be public or private.');return value;}
@@ -34,7 +34,7 @@ async function websiteDevice(env:Env,account:Account){
 }
 // Videos of disabled or deleted accounts stop playing everywhere.
 const LIVE="AND account_id NOT IN (SELECT id FROM accounts WHERE disabled=1)";
-function publicVideo(v:Video,origin:string){return {id:v.id,title:v.title,status:v.status,visibility:v.visibility,size:v.size,duration:v.duration,width:v.width,height:v.height,createdAt:v.created_at,publishedAt:v.published_at,views:v.views,thumbnailReady:!!v.thumbnail_ready,posterHd:!!v.poster_hd,thumbnailUrl:v.thumbnail_ready?`${origin}/thumbnail/${v.share_id}.gif`:null,posterUrl:v.thumbnail_ready?`${origin}/thumbnail/${v.share_id}.jpg`:null,url:v.status==='ready'?`${origin}/v/${v.share_id}`:null,commentsEnabled:v.comments_enabled!==0};}
+function publicVideo(v:Video,origin:string){return {id:v.id,title:v.title,status:v.status,visibility:v.visibility,size:v.size,duration:v.duration,width:v.width,height:v.height,createdAt:v.created_at,publishedAt:v.published_at,views:v.views,thumbnailReady:!!v.thumbnail_ready,posterHd:!!v.poster_hd,thumbnailUrl:v.thumbnail_ready?`${origin}/thumbnail/${v.share_id}.gif`:null,posterUrl:v.thumbnail_ready?`${origin}/thumbnail/${v.share_id}.jpg`:null,url:v.status==='ready'?`${origin}/v/${v.share_id}`:null,commentsEnabled:v.comments_enabled!==0,captions:!!v.captions};}
 async function getVideo(env:Env,id:string,auth:Auth){const v=await (auth.device?env.DB.prepare('SELECT * FROM videos WHERE id=? AND device_hash=? AND account_id=?').bind(id,auth.device,auth.account.id):env.DB.prepare('SELECT * FROM videos WHERE id=? AND account_id=?').bind(id,auth.account.id)).first<Video>();if(!v)throw new HttpError(404,'Video not found.');return v;}
 async function parts(env:Env,id:string){return (await env.DB.prepare('SELECT part_number AS partNumber,etag,size FROM parts WHERE video_id=? ORDER BY part_number').bind(id).all<{partNumber:number;etag:string;size:number}>()).results;}
 function expectedPartSize(v:Video,n:number){if(!Number.isInteger(n)||n<1||n>Math.ceil(v.size/CHUNK))throw new HttpError(400,'Invalid upload part.');return Math.min(CHUNK,v.size-(n-1)*CHUNK);}
@@ -42,7 +42,7 @@ async function purge(env:Env,v:Video){
  // Revoke the link before touching storage so a failed deletion stays private.
  await env.DB.prepare("UPDATE videos SET status='deleted',thumbnail_ready=0 WHERE id=?").bind(v.id).run();
  if(v.upload_id){try{await env.VIDEOS.resumeMultipartUpload(v.object_key,v.upload_id).abort();}catch{ /* Completed uploads cannot be aborted. */ }}
- await env.VIDEOS.delete([v.object_key,`${v.object_key}.preview.gif`,`${v.object_key}.preview.jpg`]);await env.DB.batch([env.DB.prepare('DELETE FROM parts WHERE video_id=?').bind(v.id),env.DB.prepare('DELETE FROM comments WHERE video_id=?').bind(v.id)]);
+ await env.VIDEOS.delete([v.object_key,`${v.object_key}.preview.gif`,`${v.object_key}.preview.jpg`,`${v.object_key}.captions.vtt`]);await env.DB.batch([env.DB.prepare('DELETE FROM parts WHERE video_id=?').bind(v.id),env.DB.prepare('DELETE FROM comments WHERE video_id=?').bind(v.id)]);
 }
 async function admin(request:Request,env:Env,url:URL){
  const auth=await owner(request,env),path=url.pathname,method=request.method;
@@ -82,7 +82,7 @@ async function admin(request:Request,env:Env,url:URL){
   }
   return json({...publicVideo(v,env.SITE_ORIGIN),chunkSize:CHUNK,parts:await parts(env,id)});
  }
- const match=path.match(/^\/api\/admin\/videos\/([a-f0-9-]{36})(?:\/(parts\/(\d+)|complete|thumbnail|poster))?$/);
+ const match=path.match(/^\/api\/admin\/videos\/([a-f0-9-]{36})(?:\/(parts\/(\d+)|complete|thumbnail|poster|captions))?$/);
  if(!match)throw new HttpError(404,'Not found.');
  const v=await getVideo(env,match[1],auth);
  if(!match[2]){
@@ -98,6 +98,16 @@ async function admin(request:Request,env:Env,url:URL){
   if(method==='DELETE'){await purge(env,v);return json({ok:true});}
  }
  if(v.status==='deleted')throw new HttpError(404,'Video not found.');
+ if(match[2]==='captions'){
+  const key=`${v.object_key}.captions.vtt`;
+  if(method==='DELETE'){await env.VIDEOS.delete(key);await env.DB.prepare('UPDATE videos SET captions=0 WHERE id=?').bind(v.id).run();return json({ok:true});}
+  if(method!=='PUT')throw new HttpError(405,'Method not allowed.');
+  if(!request.headers.get('content-type')?.startsWith('text/vtt'))throw new HttpError(415,'Send WebVTT captions.');
+  const text=await request.text();if(text.length>1024*1024)throw new HttpError(413,'Captions are too large.');
+  if(!/^\uFEFF?WEBVTT/.test(text))throw new HttpError(400,'Captions must be a WebVTT file.');
+  await env.VIDEOS.put(key,text,{httpMetadata:{contentType:'text/vtt; charset=utf-8'}});
+  await env.DB.prepare('UPDATE videos SET captions=1 WHERE id=?').bind(v.id).run();return json({ok:true,captions:true});
+ }
  if(['thumbnail','poster'].includes(match[2])&&method==='PUT'){
   const gif=match[2]==='thumbnail',type=gif?'image/gif':'image/jpeg',limit=(gif?5:2)*1024**2;let hd=false;
   if(request.headers.get('content-type')!==type||!request.body)throw new HttpError(415,'Send a GIF preview or JPEG poster.');
@@ -152,6 +162,7 @@ async function admin(request:Request,env:Env,url:URL){
  }
  throw new HttpError(405,'Method not allowed.');
 }
+function playerFor(v:Video){let p=player(v.share_id).replace('preload="metadata"',`preload="metadata"${v.thumbnail_ready?` poster="/thumbnail/${v.share_id}.jpg"`:''}`);if(v.captions)p=p.replace('</video>',`<track kind="captions" srclang="en" label="English" src="/captions/${v.share_id}.vtt"></video>`);return p;}
 async function mediaResponse(request:Request,env:Env,v:Video){
  const head=await env.VIDEOS.head(v.object_key);if(!head)throw new HttpError(404,'Video unavailable.');
  const headers=new Headers({'Content-Type':'video/mp4','Content-Length':String(head.size),'Accept-Ranges':'bytes','ETag':head.httpEtag,'Cache-Control':'private, no-store','Content-Disposition':'inline'});
@@ -172,7 +183,7 @@ type Nav='home'|'app'|'viewer';
 function shell(title:string,content:string,script='/site.js',opts:{nav?:Nav;signedIn?:boolean;description?:string;bodyClass?:string;share?:Video;origin?:string}={}){
  const nav=opts.nav||'app';
  const account=opts.signedIn?'<a class="header-link" href="/account">Account</a><a class="header-cta" href="/library">My library</a>':'<a class="header-link" href="/login">Log in</a><a class="header-cta" href="/login#signup">Sign up free</a>';
- const links=nav==='home'?'<nav class="site-nav" aria-label="Main"><a href="/#features">Features</a><a href="/#how">How it works</a><a href="/#compare">Compare</a><a href="/#faq">Questions</a></nav>':'';
+ const links=nav==='home'?'<nav class="site-nav" aria-label="Main"><a href="/#features">Features</a><a href="/#privacy">Privacy</a><a href="/#compare">Compare</a><a href="/#install">Install</a><a href="/#faq">Questions</a></nav>':'';
  const right=nav==='viewer'?'<a class="header-link" href="/">What is VidCapture?</a>':account;
  const share=opts.share;const length=share?`${Math.floor(share.duration/60)}:${String(Math.floor(share.duration%60)).padStart(2,'0')}`:'';
  // Link previews (LinkedIn, Slack, iMessage, X, Facebook, Discord) are built from these tags.
@@ -181,7 +192,7 @@ function shell(title:string,content:string,script='/site.js',opts:{nav?:Nav;sign
   // Slack, Discord, X and Facebook show an inline player from oEmbed and player tags.
   return `<link rel="alternate" type="application/json+oembed" href="${o}/oembed?url=${encodeURIComponent(watch)}&amp;format=json" title="${escapeHtml(share.title)}"><meta property="og:video" content="${page}"><meta property="og:video:url" content="${page}"><meta property="og:video:secure_url" content="${page}"><meta property="og:video:type" content="text/html"><meta property="og:video:width" content="${w}"><meta property="og:video:height" content="${h}"><meta name="twitter:player" content="${page}"><meta name="twitter:player:width" content="${w}"><meta name="twitter:player:height" content="${h}"><meta name="twitter:player:stream" content="${o}/media/${share.share_id}"><meta name="twitter:player:stream:content_type" content="video/mp4">`;})():'';
  const description=opts.description?`<meta name="description" content="${escapeHtml(opts.description)}">`:'';
- return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="${opts.nav==='home'?'index,follow':'noindex,nofollow'}"><meta name="referrer" content="no-referrer"><meta name="theme-color" content="#f6f5f1">${description}${social}${embed}<title>${escapeHtml(title)} · VidCapture</title><link rel="icon" href="/icon.svg"><link rel="stylesheet" href="/style.css"><script defer src="/share-card.js"></script><script defer src="${script}"></script></head><body${opts.bodyClass?` class="${opts.bodyClass}"`:''}><a class="skip" href="#main">Skip to content</a><header class="site-header"><a class="brand" href="/" aria-label="VidCapture home"><svg class="brand-icon" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="18" fill="#375b43"/><path d="M25 18v28l23-14z" fill="#fff"/></svg>VidCapture</a>${links}<div class="header-right">${right}</div></header><div id="main">${content}</div><footer class="site-footer"><div class="footer-brand"><svg class="brand-icon" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="18" fill="#375b43"/><path d="M25 18v28l23-14z" fill="#fff"/></svg><span>VidCapture</span></div><nav aria-label="Footer"><a href="/#features">Features</a><a href="/#how">How it works</a><a href="/#faq">Questions</a><a href="${opts.signedIn?'/library':'/login'}">${opts.signedIn?'My library':'Log in'}</a><a href="/terms">Terms</a><a href="/privacy">Privacy</a></nav><p>Record on your computer. Share one link.</p></footer><div id="toast" role="status" hidden></div></body></html>`;
+ return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="${opts.nav==='home'?'index,follow':'noindex,nofollow'}"><meta name="referrer" content="no-referrer"><meta name="theme-color" content="#f6f5f1">${description}${social}${embed}<title>${escapeHtml(title)} · VidCapture</title><link rel="icon" href="/icon.svg"><link rel="stylesheet" href="/style.css"><script defer src="/share-card.js"></script><script defer src="${script}"></script></head><body${opts.bodyClass?` class="${opts.bodyClass}"`:''}><a class="skip" href="#main">Skip to content</a><header class="site-header"><a class="brand" href="/" aria-label="VidCapture home"><svg class="brand-icon" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="18" fill="#375b43"/><path d="M25 18v28l23-14z" fill="#fff"/></svg>VidCapture</a>${links}<div class="header-right">${right}</div></header><div id="main">${content}</div><footer class="site-footer"><div class="footer-brand"><svg class="brand-icon" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="18" fill="#375b43"/><path d="M25 18v28l23-14z" fill="#fff"/></svg><span>VidCapture</span></div><nav aria-label="Footer"><a href="/#features">Features</a><a href="/#install">Install</a><a href="/#faq">Questions</a><a href="${opts.signedIn?'/library':'/login'}">${opts.signedIn?'My library':'Log in'}</a><a href="/terms">Terms</a><a href="/privacy">Privacy</a></nav><p>Record on your computer. Share one link.</p></footer><div id="toast" role="status" hidden></div></body></html>`;
 }
 const html=(body:string,status=200)=>new Response(body,{status,headers:{'Content-Type':'text/html;charset=UTF-8','Cache-Control':'no-store, no-transform'}});
 const browserSession=sessionAccount;
@@ -208,11 +219,19 @@ async function route(request:Request,env:Env,ctx:ExecutionContext){
   const object=await env.VIDEOS.get(`${v.object_key}.preview.${thumb[2]}`);if(!object)throw new HttpError(404,'Preview unavailable.');
   return new Response(method==='HEAD'?null:object.body,{headers:{'Content-Type':thumb[2]==='gif'?'image/gif':'image/jpeg','Content-Length':String(object.size),'Cache-Control':v.visibility==='public'?'public, max-age=300':'private, no-store','ETag':object.httpEtag}});
  }
+ const caption=path.match(/^\/captions\/([a-f0-9]{48})\.vtt$/);
+ if(caption){
+  if(!['GET','HEAD'].includes(method))throw new HttpError(405,'Method not allowed.');
+  const v=await env.DB.prepare(`SELECT * FROM videos WHERE share_id=? AND status='ready' AND captions=1 ${LIVE}`).bind(caption[1]).first<Video>();
+  if(!v||v.visibility==='private'&&(await browserSession(request,env))?.id!==v.account_id)throw new HttpError(404,'Captions unavailable.');
+  const object=await env.VIDEOS.get(`${v.object_key}.captions.vtt`);if(!object)throw new HttpError(404,'Captions unavailable.');
+  return new Response(method==='HEAD'?null:object.body,{headers:{'Content-Type':'text/vtt; charset=utf-8','Cache-Control':v.visibility==='public'?'public, max-age=60':'private, no-store'}});
+ }
  const embedMatch=path.match(/^\/embed\/([a-f0-9]{48})$/);
  if(embedMatch&&['GET','HEAD'].includes(method)){
   const v=await env.DB.prepare(`SELECT * FROM videos WHERE share_id=? AND status='ready' AND visibility='public' ${LIVE}`).bind(embedMatch[1]).first<Video>();
   if(!v)throw new HttpError(404,'This video is unavailable.');
-  return html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><meta name="referrer" content="no-referrer"><title>${escapeHtml(v.title)} · VidCapture</title><link rel="stylesheet" href="/style.css"></head><body class="embed-body">${player(v.share_id).replace('preload="metadata"',`preload="metadata"${v.thumbnail_ready?` poster="/thumbnail/${v.share_id}.jpg"`:''}`)}<a class="embed-brand" href="/v/${v.share_id}" target="_blank" rel="noopener">Watch on VidCapture</a><script defer src="/site.js"></script></body></html>`);
+  return html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><meta name="referrer" content="no-referrer"><title>${escapeHtml(v.title)} · VidCapture</title><link rel="stylesheet" href="/style.css"></head><body class="embed-body">${playerFor(v)}<a class="embed-brand" href="/v/${v.share_id}" target="_blank" rel="noopener">Watch on VidCapture</a><script defer src="/site.js"></script></body></html>`);
  }
  if(path==='/oembed'&&['GET','HEAD'].includes(method)){
   const target=url.searchParams.get('url')||'',share=target.match(/^https?:\/\/[^/]+\/(?:v|embed)\/([a-f0-9]{48})(?:[?#].*)?$/)?.[1];
@@ -241,17 +260,16 @@ async function route(request:Request,env:Env,ctx:ExecutionContext){
   if(m[1]==='media')return mediaResponse(request,env,v);
   if(m[1]==='v'){
    const date=new Date(v.created_at*1000).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}),length=`${Math.floor(v.duration/60)}:${String(Math.floor(v.duration%60)).padStart(2,'0')}`;
-   const poster=v.thumbnail_ready?` poster="/thumbnail/${v.share_id}.jpg"`:'';
    const report=ownerView?'':`<form id="report-form" class="report-form" data-share="${v.share_id}" hidden><h2>Report this video</h2><label for="report-reason">Reason</label><select id="report-reason" required><option value="">Choose a reason</option><option>Illegal or harmful</option><option>Copyright</option><option>Harassment or private information</option><option>Spam</option><option>Something else</option></select><label for="report-details">Details (optional)</label><textarea id="report-details" maxlength="1000" rows="3"></textarea><div class="actions"><button class="button" type="submit">Send report</button><button class="quiet" type="button" id="report-cancel">Cancel</button></div><p id="report-status" role="status"></p></form>`;
    const comments=`<section class="comments" id="comments" data-share="${v.share_id}" data-duration="${v.duration}"${ownerView?' data-owner':''} aria-labelledby="comments-heading"><div class="comments-head"><h2 id="comments-heading">Comments <span id="comment-count" class="subtle"></span></h2>${ownerView?`<label class="switch"><input type="checkbox" id="comments-toggle"${v.comments_enabled?' checked':''}><span>Allow comments</span></label>`:''}</div>
 <form id="comment-form" class="comment-form" novalidate${v.comments_enabled?'':' hidden'}><label for="comment-body" class="sr-only">Comment</label><textarea id="comment-body" rows="2" maxlength="1000" placeholder="Add a comment" required></textarea><div class="comment-row" id="comment-extra" hidden><label class="comment-at"><input type="checkbox" id="comment-at" checked><span>At <span id="comment-at-time">0:00</span></span></label><label for="comment-name" class="sr-only">Your name</label><input id="comment-name" maxlength="60" autocomplete="name" placeholder="Your name" required><button class="button" type="submit">Post</button></div><p class="login-status" id="comment-status" role="status" aria-live="polite"></p></form>
 <p class="subtle" id="comments-off"${v.comments_enabled?' hidden':''}>Comments are off.</p><ol class="comment-list" id="comment-list"></ol></section>`;
-   return html(shell(v.title,`<main class="watch"><div class="watch-heading"><div><h1>${escapeHtml(v.title)}</h1>${v.visibility==='private'?'<p class="subtle">Private. Only you can watch it while signed in.</p>':''}</div><div class="actions"><button class="button" id="copy-link"${v.visibility==='private'?' data-private':v.thumbnail_ready?' data-card':''}>Copy link</button></div></div>${player(v.share_id).replace('preload="metadata"',`preload="metadata"${poster}`)}<div class="player-meta"><span>${date} <span class="dot">·</span> ${length}</span>${ownerView?'':'<button type="button" class="text-button quiet-link" id="report-open">Report video</button>'}</div>${report}${comments}</main><script defer src="/comments.js"></script>`,'/site.js',{nav:'viewer',share:v,origin:env.SITE_ORIGIN}));
+   return html(shell(v.title,`<main class="watch"><div class="watch-heading"><div><h1>${escapeHtml(v.title)}</h1>${v.visibility==='private'?'<p class="subtle">Private. Only you can watch it while signed in.</p>':''}</div><div class="actions"><button class="button" id="copy-link"${v.visibility==='private'?' data-private':v.thumbnail_ready?' data-card':''}>Copy link</button></div></div>${playerFor(v)}<div class="player-meta"><span>${date} <span class="dot">·</span> ${length}</span><span class="meta-actions">${ownerView?`<button type="button" class="text-button quiet-link" id="use-frame" data-video="${v.id}" data-share="${v.share_id}">Use this frame as preview</button>`:'<button type="button" class="text-button quiet-link" id="report-open">Report video</button>'}</span></div><div class="reactions" id="reactions" data-share="${v.share_id}" role="group" aria-label="Reactions"></div>${v.captions?`<details class="transcript" id="transcript" data-src="/captions/${v.share_id}.vtt"><summary>Transcript</summary><ol class="transcript-list" id="transcript-list"></ol></details><script defer src="/transcript.js"></script>`:''}${report}${comments}</main><script defer src="/comments.js"></script>`,'/site.js',{nav:'viewer',share:v,origin:env.SITE_ORIGIN}));
   }
  }
  if(method!=='GET'&&method!=='HEAD')throw new HttpError(405,'Method not allowed.');
  if(path==='/health')return json({ok:true});
- if(path==='/'){const signedIn=!!await browserSession(request,env);return html(shell('Record. Edit. Share.',homePage(signedIn),'/site.js',{nav:'home',signedIn,bodyClass:'page-home',description:'VidCapture is a screen recorder for Linux that keeps recordings on your computer, lets you cut them down, and shares the version you choose with one link.'}));}
+ if(path==='/'){const signedIn=!!await browserSession(request,env);return html(shell('Record, edit, and share from your top bar',homePage(signedIn),'/site.js',{nav:'home',signedIn,bodyClass:'page-home',description:'VidCapture is a free, open-source screen and camera recorder for Omarchy. Clean up your mic live, edit by deleting words from the transcript, and share one link.'}));}
  if(path==='/login'||path==='/signup'){if(await browserSession(request,env))return new Response(null,{status:302,headers:{Location:'/library','Cache-Control':'no-store'}});return html(shell('Log in or sign up',loginPage(),'/site.js',{nav:'viewer',bodyClass:'page-login'}));}
  const page=accountPages[path as keyof typeof accountPages];
  if(page){
@@ -265,7 +283,8 @@ async function route(request:Request,env:Env,ctx:ExecutionContext){
   const content=path==='/connect'?'<main class="welcome"><h1>Opening your library.</h1><p id="connect-status" role="status">Signing you in…</p></main>':'<main class="library"><div class="page-heading"><div><h1>My videos</h1></div><div class="actions"><button id="logout" class="quiet" hidden>Log out</button><label class="button" id="upload-label" hidden>Upload video <input id="upload" type="file" accept="video/mp4,.mp4" hidden></label></div></div><div id="verify-banner" class="notice" hidden><p>Confirm your email to start sharing. We sent a link to <strong id="verify-email"></strong>.</p><button class="quiet" id="verify-resend" type="button">Send it again</button></div><p id="storage-meter" class="subtle" hidden></p><div id="library-message" class="empty" role="status">Loading your library…</div><div id="library-tools" hidden><div class="library-filters"><input id="search" type="search" placeholder="Search your videos" aria-label="Search videos"><select id="visibility-filter" aria-label="Show"><option value="all">All videos</option><option value="public">Public</option><option value="private">Private</option></select></div><span id="video-count" class="subtle"></span></div><div id="upload-progress" hidden><span id="upload-status"></span><progress max="100" value="0"></progress><button id="cancel-upload" class="quiet">Cancel</button></div><div id="video-grid" class="video-grid"></div></main>';
   return html(shell(path==='/library'?'My videos':'Signing in',content,'/site.js',{signedIn:path==='/library'}));
  }
- if(['/style.css','/site.js','/player.js','/icon.svg','/share-card.js','/gifenc.js','/gifenc-LICENSE.md','/preview.js','/comments.js'].includes(path))return env.ASSETS.fetch(request);
+ if(['/style.css','/site.js','/player.js','/icon.svg','/share-card.js','/gifenc.js','/gifenc-LICENSE.md','/preview.js','/comments.js','/transcript.js'].includes(path))return env.ASSETS.fetch(request);
+ if(/^\/shots\/[a-z-]+\.webp$/.test(path)){const r=await env.ASSETS.fetch(request);if(r.status!==200)throw new HttpError(404,'Page not found.');const out=new Response(r.body,r);out.headers.set('Cache-Control','public, max-age=86400');return out;}
  throw new HttpError(404,'Page not found.');
 }
 export default {

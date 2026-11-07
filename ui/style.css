@@ -202,7 +202,7 @@ button:disabled, select:disabled { cursor: default; }
 
 .source-tabs {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 2px;
   padding: 3px;
   border-radius: 10px;
@@ -225,6 +225,10 @@ button:disabled, select:disabled { cursor: default; }
 .source-tabs button:disabled { opacity: 0.55; }
 .source-tabs button:focus-visible { outline-offset: -2px; }
 .source-tabs .icon { width: 17px; height: 17px; }
+.source-tabs button { gap: 6px; padding: 0 4px; white-space: nowrap; min-width: 0; overflow: hidden; }
+/* Four sources share the row; icons give way first when it is narrow. */
+.panel.source { container-type: inline-size; }
+@container (max-width: 400px) { .source-tabs .icon { display: none; } }
 
 .source-tools { display: flex; margin: -4px 0 -6px -10px; }
 .source-tools[hidden] { display: none; }
@@ -468,6 +472,8 @@ select option { background: var(--bar); color: var(--text); }
 }
 .btn-record:hover:not(:disabled) { background: var(--rec-hover); }
 .btn-record:disabled { background: var(--raised); color: var(--faint); opacity: 1; }
+/* Restart and Delete take ask for a second click before acting. */
+.btn-plain.is-armed, .btn-plain.is-armed:hover:not(:disabled) { background: var(--rec-solid, #c0392b); color: var(--rec-ink); }
 
 .rec-mark {
   width: 10px;

@@ -32,6 +32,8 @@
     status: $('status'),
     openLast: $('open-last'),
     pause: $('pause'),
+    restart: $('restart'),
+    discard: $('discard'),
     pauseLabel: $('pause').querySelector('.label'),
     pauseUse: $('pause').querySelector('use'),
     primary: $('primary'),
@@ -46,6 +48,7 @@
 
   let state = null;
   let pending = null;
+  let armed = null, armTimer = null;
   let localError = null;
   let dismissedError = null;
   const signatures = {};
@@ -173,7 +176,7 @@
 
   function targetTab(t) {
     if (!t) return 'screen';
-    return t.kind === 'window' ? 'window' : t.kind === 'region' ? 'area' : 'screen';
+    return t.kind === 'window' ? 'window' : t.kind === 'region' ? 'area' : t.kind === 'camera' ? 'camera' : 'screen';
   }
   function targetKey(t) {
     return t ? [t.kind, t.address || t.monitor || '', t.x, t.y, t.width, t.height].join(':') : '';
@@ -291,7 +294,8 @@
     const model = {
       tab, key, at: src.at, loading: src.loading && !src.data, waiting,
       available: target ? target.available : null, label: target ? target.label : null,
-      cam: [s.settings?.camera !== 'none', s.settings?.cameraSize, s.settings?.cameraCorner],
+      cam: [s.settings?.camera, s.settings?.cameraSize, s.settings?.cameraCorner],
+      cameras: ((s.devices && s.devices.cameras) || []).map((c) => [c.id, c.name]),
       monitors: devMonitors.map((m) => [m.id, m.name, m.width, m.height, m.pixelWidth, m.pixelHeight]),
     };
 
@@ -326,6 +330,15 @@
           cards.push(card);
         }
         if (!cards.length) cards.push(span('empty', src.data ? 'No open windows. Open the app you want to record, then come back.' : 'Looking for windows'));
+      } else if (tab === 'camera') {
+        // Camera only: one card per camera, with no screen in the recording.
+        for (const c of (s.devices && s.devices.cameras) || []) {
+          const selected = !!target && target.kind === 'camera' && s.settings.camera === c.id;
+          const card = sourceCard({ name: c.name || String(c.id), width: 16, height: 9, selected, fallback: icon('i-camera'), label: `Camera ${c.name || c.id}` }, { settings: { camera: 'none' } });
+          card.dataset.camera = String(c.id);
+          cards.push(card);
+        }
+        if (!cards.length) cards.push(span('empty', 'No cameras found.'));
       } else {
         const area = target && target.kind === 'region' ? target : null;
         const size = area && dims(area.pixelWidth || area.width, area.pixelHeight || area.height);
@@ -349,7 +362,7 @@
       el.targets.classList.toggle('single', tab === 'screen' && devMonitors.length < 2);
       el.targets.replaceChildren(...cards);
 
-      el.regionNote.hidden = !target || targetTab(target) !== tab || target.kind === 'monitor';
+      el.regionNote.hidden = !target || targetTab(target) !== tab || target.kind === 'monitor' || target.kind === 'camera';
       el.regionNote.textContent = target?.kind === 'window'
         ? (target.available === false ? 'This window is no longer visible. Choose it again before recording.' : 'The recording and camera follow this window as it moves. Keep it on this display.')
         : 'This area stays fixed when windows move.';
@@ -375,6 +388,8 @@
         run('target', () => bridge.chooseSource({ kind: 'window', address: m.address }));
       } else if (tab === 'area' && m) {
         run('target', () => bridge.chooseSource({ kind: 'region', x: m.x, y: m.y, width: m.width, height: m.height }));
+      } else if (tab === 'camera' && state.settings.camera !== 'none') {
+        run('target', () => bridge.chooseTarget('camera'));
       }
     }
     render();
@@ -426,7 +441,11 @@
     el.cameraCorrection.hidden = !(profile && profile.lensCorrection);
     el.cameraProfileNote.hidden = !(profile && profile.note);
     el.cameraProfileNote.textContent = profile && profile.note ? `${profile.name}: ${profile.note}` : '';
-    el.cameraOptions.hidden = !hasCamera;
+    el.cameraOptions.hidden = !hasCamera || (src.tab || targetTab(s.target)) === 'camera';
+    // A camera-only take records the camera as it is: lighting and lens correction are bubble effects.
+    const cameraOnly = (src.tab || targetTab(s.target)) === 'camera';
+    if (cameraOnly) el.cameraCorrection.hidden = true;
+    document.querySelector('fieldset[data-setting="cameraLighting"]').hidden = cameraOnly;
     el.cameraIcon.querySelector('use').setAttribute('href', hasCamera ? '#i-camera' : '#i-camera-off');
     el.camera.closest('.select-wrap').classList.toggle('off', !hasCamera);
     const hasMic = settings.microphone && settings.microphone !== 'none';
@@ -506,7 +525,8 @@
   function renderTransport(s) {
     const phase = s.phase;
     const shownTab = src.tab || targetTab(s.target);
-    const hasTarget = !!s.target && s.target.available !== false && targetTab(s.target) === shownTab;
+    const hasTarget = !!s.target && s.target.available !== false && targetTab(s.target) === shownTab &&
+      !(shownTab === 'camera' && (!s.settings || s.settings.camera === 'none'));
 
     el.time.textContent = formatElapsed(s.elapsed);
 
@@ -519,7 +539,7 @@
       case 'stopping': status = 'Saving the file'; break;
       case 'saved': status = s.lastFile ? `Saved ${titleOf(s.lastFile)}` : 'Saved'; break;
       case 'error': status = 'Not recording'; break;
-      default: status = hasTarget ? 'Ready' : shownTab === 'window' ? 'Choose a window to record' : shownTab === 'area' ? 'Draw an area to record' : 'Choose a display to record';
+      default: status = hasTarget ? 'Ready' : shownTab === 'camera' ? 'Choose a camera to record' : shownTab === 'window' ? 'Choose a window to record' : shownTab === 'area' ? 'Draw an area to record' : 'Choose a display to record';
     }
     if (pending === 'start' && phase !== 'starting' && !ACTIVE.has(phase)) status = 'Starting';
     if (el.status.textContent !== status) el.status.textContent = status;
@@ -551,6 +571,12 @@
     el.pauseLabel.textContent = paused ? 'Resume' : 'Pause';
     el.pause.setAttribute('aria-label', paused ? 'Resume' : 'Pause');
     el.pauseUse.setAttribute('href', paused ? '#i-play' : '#i-pause');
+    const keys = s.shortcuts || {};
+    el.pause.title = keys.pause ? `${paused ? 'Resume' : 'Pause'} (${keys.pause})` : '';
+    if (live) el.primary.title = keys.record ? `Stop and save (${keys.record})` : '';
+    else if (!el.primary.title && keys.record) el.primary.title = `Start recording (${keys.record})`;
+    for (const b of [el.restart, el.discard]) { b.hidden = !live; b.disabled = !!pending; }
+    if (!live && armed) disarm();
 
     el.openLast.hidden = !(phase === 'saved' && s.lastFile);
     el.editLast.hidden = el.openLast.hidden;
@@ -599,6 +625,7 @@
     if (b.dataset.draw) run('target-region', () => bridge.pickOnScreen('area'));
     else if (b.dataset.address) run('target', () => bridge.chooseSource({ kind: 'window', address: b.dataset.address }));
     else if (b.dataset.monitorId) run('target', () => bridge.chooseTarget(b.dataset.monitorId));
+    else if (b.dataset.camera) run('target', () => bridge.chooseSource({ kind: 'camera', device: b.dataset.camera }));
   });
   for (const b of document.querySelectorAll('.source-tabs [role="tab"]')) b.addEventListener('click', () => chooseTab(b.dataset.tab));
   // Arrow keys move between tabs, as tab lists do.
@@ -854,6 +881,22 @@
     else run('start', () => bridge.start());
   });
   el.pause.addEventListener('click', () => run('pause', () => bridge.pause()));
+  // Restart and Delete take: the first click arms the button, a second click within a few seconds acts.
+  const ARM = { restart: ['Restart', 'Confirm restart'], discard: ['Delete take', 'Confirm delete'] };
+  function disarm() {
+    if (!armed) return;
+    const b = el[armed]; b.classList.remove('is-armed'); b.querySelector('.label').textContent = ARM[armed][0];
+    b.removeAttribute('aria-pressed'); armed = null; clearTimeout(armTimer);
+  }
+  for (const kind of ['restart', 'discard']) {
+    el[kind].addEventListener('click', () => {
+      if (armed === kind) { disarm(); run(kind, () => bridge[kind]()); return; }
+      disarm(); armed = kind;
+      const b = el[kind]; b.classList.add('is-armed'); b.querySelector('.label').textContent = ARM[kind][1];
+      armTimer = setTimeout(disarm, 5000);
+    });
+    el[kind].addEventListener('blur', () => { if (armed === kind) setTimeout(() => { if (document.activeElement !== el[kind]) disarm(); }, 0); });
+  }
 
   async function openPath(path) {
     if (!bridge || !path) return;
@@ -2041,7 +2084,7 @@
       title = connecting?'Connect your VidCapture account':job.kind==='publish'?'Sharing on VidCapture':audio ? (folio ? 'Enhancing audio with Folio' : job.kind==='quick-audio' ? 'Enhancing audio with Quick studio' : 'Enhancing audio with fast cleanup') : 'Saving version';
       detail = ed.canceling ? 'Canceling' : (job.stage || 'Working');
     } else if (status === 'done') {
-      title = job.kind==='publish'?'Your share link is ready':audio ? 'Enhanced copy saved' : 'Version saved to your Library';
+      title = job.kind==='publish'?'Your share link is ready':audio ? 'Enhanced copy saved' : 'Version saved to Recordings';
       detail = job.kind==='publish'?(s.share?.cardWarning||s.share?.url||'Ready to share'):baseName(job.output);
     } else {
       title = job.kind==='publish'?'Video was not shared':audio ? 'Audio was not enhanced' : 'Version was not saved';

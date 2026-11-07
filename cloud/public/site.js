@@ -99,7 +99,8 @@ if($('account-email')){
  $('logout').onclick=logout;$('verify-resend').onclick=()=>resendVerify($('verify-resend'));
  const load=async()=>{
   let me;try{me=await api('/api/me');}catch(error){if(error.status===401)location.replace('/login');else toast(error.message);return;}
-  $('account-email').textContent=me.email;$('account-verify').hidden=me.verified;$('admin-link').hidden=!me.isAdmin;
+  $('account-email').textContent=me.email;
+  const notify=$('notify-comments');notify.checked=me.notifyComments;notify.onchange=async()=>{notify.disabled=true;try{await api('/api/account/notifications',{method:'POST',body:JSON.stringify({comments:notify.checked})});setStatus($('notify-status'),notify.checked?'Comment emails are on.':'Comment emails are off.');}catch(error){notify.checked=!notify.checked;setStatus($('notify-status'),error.message,true);}finally{notify.disabled=false;}};$('account-verify').hidden=me.verified;$('admin-link').hidden=!me.isAdmin;
   $('account-storage').textContent=`${formatSize(me.usedBytes)} of ${formatSize(me.quotaBytes)} used`;$('account-storage-bar').value=Math.min(100,me.usedBytes/me.quotaBytes*100);
   $('current-password').closest('form').querySelector('[for=current-password]').hidden=$('current-password').hidden=!me.hasPassword;
   $('delete-password').hidden=document.querySelector('[for=delete-password]').hidden=!me.hasPassword;

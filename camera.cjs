@@ -22,6 +22,29 @@ function cameraMode(formats) {
 }
 // Shader-safe number literal.
 const glsl=v=>{const n=Number(v);if(!Number.isFinite(n))throw new Error('Invalid lens correction value.');const t=String(n);return /[.e]/.test(t)?t:t+'.0';};
+// The mode for a camera-only take: the full frame at 30 fps, compressed when the
+// camera offers it. 1080p caps the mode at 1920x1080; Match source takes the
+// largest the camera supplies, up to 4K. pixfmt is GPU Screen Recorder's name.
+function cameraRecordMode(formats,resolution='1920x1080'){
+  const modes=[];let format=null,size=null;
+  for(const line of String(formats).split('\n')){
+    const f=line.match(/\[\d+\]: '([^']+)'/);
+    if(f){format=f[1];size=null;continue;}
+    const s=line.match(/Size: Discrete (\d+)x(\d+)/);
+    if(s){size={width:+s[1],height:+s[2]};continue;}
+    const fps=line.match(/\(([\d.]+) fps\)/);
+    if(fps&&size&&+fps[1]===30&&['MJPG','YUYV'].includes(format))modes.push({...size,format});
+  }
+  const cap=resolution==='0x0'?{width:3840,height:2160}:{width:1920,height:1080};
+  const fit=modes.filter(m=>m.width<=cap.width&&m.height<=cap.height);
+  const compressed=fit.filter(m=>m.format==='MJPG');
+  // Raw frames above 720p rarely reach 30 fps over USB.
+  const candidates=compressed.length?compressed:fit.filter(m=>m.height<=720);
+  candidates.sort((a,b)=>b.height*b.width-a.height*a.width);
+  const mode=candidates[0];
+  if(!mode)return {width:0,height:0,fps:0,pixfmt:'auto'};
+  return {width:mode.width,height:mode.height,fps:30,pixfmt:mode.format==='MJPG'?'mjpeg':'yuyv'};
+}
 function cameraShader({correction=null,lighting='original'}={}) {
   // correction comes from a camera profile: radial and offset coefficients in
   // half-image-height units. The input is the center square.
@@ -65,4 +88,4 @@ function cameraCommand(socket,command) {
     });
   });
 }
-module.exports={cameraMode,cameraShader,cameraCommand};
+module.exports={cameraMode,cameraRecordMode,cameraShader,cameraCommand};
