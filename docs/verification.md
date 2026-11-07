@@ -1,4 +1,10 @@
-# v0.1.0-alpha.5 verification
+# v0.1.0-alpha.6 verification
+
+Alpha.6 changes only the project's GitHub test workflow. The extension's native host starts with `#!/usr/bin/node`, the path of the `nodejs` package the install requires on Arch. The test runner kept Node elsewhere, so alpha.5's native host test failed there with ENOENT; the workflow now places the selected Node at /usr/bin/node and checks its version before the tests run. The app, extension and website are unchanged from alpha.5, so the alpha.5 checks below still describe them.
+
+- 182 Node tests passed in the published snapshot by itself, and the snapshot passed the privacy audit.
+
+## Alpha.5 checks
 
 Alpha.5 adds Turnstile on sign-up and account email, report and weekly-summary emails for the site owner, a reworked library and watch page for owners, desktop fixes (window class rules, copy-after-share, rename errors, Recordings actions, switching the microphone from the top-bar panel while cleanup is on), microphone cleanup health checks, and a corrected privacy description. Each change was checked by a reviewer separate from its author on November 7, 2026, on the same single Omarchy workstation:
 
