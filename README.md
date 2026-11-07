@@ -75,7 +75,7 @@ Quit VidCapture, then run `./uninstall.sh` from the checkout. It removes only ow
 npm test
 ```
 
-The Node tests cover recording arguments, camera lifecycle and IPC, geometry, edits, upload behavior, and sharing-origin validation. They do not establish clean-machine or broad GPU compatibility. See [verification](docs/verification.md) for what was actually checked for this release.
+Tests require FFmpeg and FFprobe on PATH. The Node tests cover recording arguments, camera lifecycle and IPC, geometry, edits, upload behavior, and sharing-origin validation. They do not establish clean-machine or broad GPU compatibility. See [verification](docs/verification.md) for what was actually checked for this release.
 
 Use Issues for reproducible bugs. Include your Omarchy/Hyprland versions, GPU and driver, recording source, and the exact error. Never include publishing.json, device keys, sign-in links, private recordings, or client information. Report vulnerabilities through GitHub's private security advisory flow when available.
 
