@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>VidCapture bar</title>
+  <link rel="stylesheet" href="surfaces.css">
+</head>
+<body class="bar">
+  <!-- Icons: Tabler Icons (MIT License, Copyright (c) 2020-2024 Paweł Kuna), https://tabler.io/icons -->
+  <svg class="sprite" aria-hidden="true" focusable="false">
+    <symbol id="i-window" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v10a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2z"/><path d="M6 8h.01"/><path d="M9 8h.01"/></symbol>
+    <symbol id="i-marquee" viewBox="0 0 24 24"><path d="M4 6v-1a1 1 0 0 1 1 -1h1m5 0h2m5 0h1a1 1 0 0 1 1 1v1m0 5v2m0 5v1a1 1 0 0 1 -1 1h-1m-5 0h-2m-5 0h-1a1 1 0 0 1 -1 -1v-1m0 -5v-2m0 -5"/></symbol>
+    <symbol id="i-desktop" viewBox="0 0 24 24"><path d="M3 5a1 1 0 0 1 1 -1h16a1 1 0 0 1 1 1v10a1 1 0 0 1 -1 1h-16a1 1 0 0 1 -1 -1v-10z"/><path d="M7 20h10"/><path d="M9 16v4"/><path d="M15 16v4"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6l-12 12"/><path d="M6 6l12 12"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><path d="M6 6a1 1 0 0 1 1 -1h2a1 1 0 0 1 1 1v12a1 1 0 0 1 -1 1h-2a1 1 0 0 1 -1 -1z"/><path d="M14 6a1 1 0 0 1 1 -1h2a1 1 0 0 1 1 1v12a1 1 0 0 1 -1 1h-2a1 1 0 0 1 -1 -1z"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4v16l13 -8z"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24"><path d="M5 7a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v10a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2z"/></symbol>
+  </svg>
+  <div class="toolbar" role="toolbar" aria-label="New recording">
+    <img class="mark" src="icon.svg" alt="VidCapture">
+    <button type="button" class="mode" data-mode="window" aria-pressed="false"><svg class="icon" aria-hidden="true"><use href="#i-window"/></svg>Window</button>
+    <button type="button" class="mode" data-mode="area" aria-pressed="false"><svg class="icon" aria-hidden="true"><use href="#i-marquee"/></svg>Area</button>
+    <button type="button" class="mode" data-mode="display" aria-pressed="false"><svg class="icon" aria-hidden="true"><use href="#i-desktop"/></svg>Display</button>
+    <button type="button" class="icon-btn" id="dismiss" aria-label="Close" title="Close (Esc)"><svg class="icon"><use href="#i-x"/></svg></button>
+  </div>
+  <script src="bar.js"></script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+.local/
+node_modules/
+.wrangler/
+__pycache__/
+*.pyc
+.env*
+.dev.vars*
+publishing.json
+cloud/wrangler.jsonc
+cloud/worker-configuration.d.ts

@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; media-src 'self' capture-media:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>VidCapture</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body data-phase="idle" data-view="record">
+  <!-- Icons: Tabler Icons (MIT License, Copyright (c) 2020-2024 Paweł Kuna), https://tabler.io/icons -->
+  <svg class="sprite" aria-hidden="true" focusable="false">
+    <symbol id="i-marquee" viewBox="0 0 24 24"><path d="M4 6v-1a1 1 0 0 1 1 -1h1m5 0h2m5 0h1a1 1 0 0 1 1 1v1m0 5v2m0 5v1a1 1 0 0 1 -1 1h-1m-5 0h-2m-5 0h-1a1 1 0 0 1 -1 -1v-1m0 -5v-2m0 -5"/></symbol>
+    <symbol id="i-desktop" viewBox="0 0 24 24"><path d="M3 5a1 1 0 0 1 1 -1h16a1 1 0 0 1 1 1v10a1 1 0 0 1 -1 1h-16a1 1 0 0 1 -1 -1v-10z"/><path d="M7 20h10"/><path d="M9 16v4"/><path d="M15 16v4"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12l5 5l10 -10"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><path d="M6 6a1 1 0 0 1 1 -1h2a1 1 0 0 1 1 1v12a1 1 0 0 1 -1 1h-2a1 1 0 0 1 -1 -1z"/><path d="M14 6a1 1 0 0 1 1 -1h2a1 1 0 0 1 1 1v12a1 1 0 0 1 -1 1h-2a1 1 0 0 1 -1 -1z"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4v16l13 -8z"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24"><path d="M5 7a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v10a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2z"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M5 4h4l3 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-11a2 2 0 0 1 2 -2"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8.1 8.1 0 0 0 -15.5 -2m-.5 -4v4h4"/><path d="M4 13a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0"/><path d="M21 12c-2.4 4 -5.4 6 -9 6c-3.6 0 -6.6 -2 -9 -6c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="M6 9l6 6l6 -6"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0"/><path d="M12 8v4"/><path d="M12 16h.01"/></symbol>
+    <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6l-12 12"/><path d="M6 6l12 12"/></symbol>
+    <symbol id="i-cut" viewBox="0 0 24 24"><path d="M4 17a3 3 0 1 0 6 0a3 3 0 1 0 -6 0"/><path d="M14 17a3 3 0 1 0 6 0a3 3 0 1 0 -6 0"/><path d="M9.15 14.85l8.85 -10.85"/><path d="M6 4l8.85 10.85"/></symbol>
+    <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14l-4 -4l4 -4"/><path d="M5 10h11a4 4 0 1 1 0 8h-1"/></symbol>
+  </svg>
+
+  <header class="titlebar">
+    <span class="wordmark"><img src="icon.svg" alt="" width="16" height="16">VidCapture</span>
+    <div class="view-switch" role="group" aria-label="View">
+      <button type="button" id="view-record" aria-pressed="true">Record</button>
+      <button type="button" id="view-edit" aria-pressed="false">Edit</button>
+    </div>
+    <div class="window-controls">
+      <button type="button" class="icon-btn" id="minimize" aria-label="Minimize" title="Minimize"><svg class="icon"><use href="#i-minus"/></svg></button>
+      <button type="button" class="icon-btn" id="close" aria-label="Close" title="Close"><svg class="icon"><use href="#i-x"/></svg></button>
+    </div>
+  </header>
+
+  <div class="alert" id="alert" role="alert" hidden>
+    <svg class="icon" aria-hidden="true"><use href="#i-alert"/></svg>
+    <p id="alert-text"></p>
+    <button type="button" class="text-btn" id="alert-dismiss">Dismiss</button>
+  </div>
+
+  <dialog id="window-picker" aria-labelledby="window-picker-title">
+    <div class="panel-head"><h2 id="window-picker-title">Choose a window</h2><div class="actions"><button type="button" class="btn btn-quiet" id="window-picker-screen">Pick on screen</button><button type="button" class="btn btn-quiet" id="window-picker-close">Cancel</button></div></div>
+    <p class="note">Its title appears in Capture, and a green outline marks your selection.</p>
+    <div id="window-list"></div>
+  </dialog>
+
+  <dialog id="share-dialog" aria-labelledby="share-title">
+    <form id="share-form">
+      <h2 id="share-title">Share on VidCapture</h2>
+      <p class="note">Your current edits will be included. Anyone with the link can watch.</p>
+      <label class="field"><span>Video title</span><input id="share-name" maxlength="160" required autocomplete="off"></label>
+      <div class="actions"><button type="button" class="btn btn-quiet" id="share-cancel">Cancel</button><button class="btn btn-solid" type="submit">Upload and create link</button></div>
+    </form>
+  </dialog>
+  <main class="content" id="content">
+    <section class="panel source" aria-labelledby="source-heading">
+      <div class="panel-head">
+        <h2 id="source-heading">Source</h2>
+        <button type="button" class="btn btn-quiet" id="open-bar" title="Pick a window, area, or display on screen"><svg class="icon" aria-hidden="true"><use href="#i-marquee"/></svg><span>Pick on screen</span></button>
+      </div>
+      <div class="targets" id="targets" role="group" aria-labelledby="source-heading"></div>
+      <p class="note" id="region-note" hidden>Window and area recordings capture a fixed part of the screen. Keep the window in place while recording.</p>
+    </section>
+
+    <section class="panel inputs" aria-labelledby="inputs-heading">
+      <div class="panel-head">
+        <h2 id="inputs-heading">Audio and camera</h2>
+        <button type="button" class="btn btn-quiet" id="refresh" aria-label="Refresh microphones and cameras" title="Refresh microphones and cameras"><svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg><span>Refresh devices</span></button>
+      </div>
+
+      <div class="field">
+        <label for="microphone">Microphone</label>
+        <div class="select-wrap">
+          <select id="microphone" data-setting="microphone"></select>
+          <svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg>
+        </div>
+      </div>
+
+      <div class="field field-inline">
+        <span id="system-audio-label">System audio</span>
+        <button type="button" class="switch" id="system-audio" role="switch" aria-checked="false" aria-labelledby="system-audio-label"><span class="switch-thumb"></span></button>
+      </div>
+
+      <div class="field">
+        <label for="camera">Camera</label>
+        <div class="camera-row">
+          <div class="select-wrap">
+            <select id="camera" data-setting="camera"></select>
+            <svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg>
+          </div>
+          <button type="button" class="btn btn-quiet" id="preview" aria-pressed="false"><svg class="icon" aria-hidden="true"><use href="#i-eye"/></svg><span>Preview</span></button>
+        </div>
+      </div>
+
+      <details class="more" id="more">
+        <summary><span>More settings</span><svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></summary>
+        <div class="more-body" id="more-body">
+          <fieldset class="segmented" data-setting="cameraSize" title="Scales with the selected window. Changes appear immediately in Preview.">
+            <legend>Camera size</legend>
+            <div class="seg">
+              <label><input type="radio" name="cameraSize" value="small"><span>Small</span></label>
+              <label><input type="radio" name="cameraSize" value="medium"><span>Medium</span></label>
+              <label><input type="radio" name="cameraSize" value="large"><span>Large</span></label>
+            </div>
+          </fieldset>
+          <fieldset class="segmented" data-setting="cameraCorner">
+            <legend>Camera corner</legend>
+            <div class="seg">
+              <label><input type="radio" name="cameraCorner" value="bottom-left"><span>Bottom left</span></label>
+              <label><input type="radio" name="cameraCorner" value="bottom-right"><span>Bottom right</span></label>
+            </div>
+          </fieldset>
+          <fieldset class="segmented" data-setting="cameraCorrection" id="camera-correction" hidden>
+            <legend>Lens correction</legend>
+            <div class="seg">
+              <label><input type="radio" name="cameraCorrection" value="computer"><span>On</span></label>
+              <label><input type="radio" name="cameraCorrection" value="off"><span>Off</span></label>
+            </div>
+          </fieldset>
+          <p class="note" id="camera-profile-note" hidden>Razer 4K at 30 fps uses computer-side correction with camera HDR off.</p>
+          <fieldset class="segmented" data-setting="cameraLighting">
+            <legend>Camera lighting</legend>
+            <div class="seg">
+              <label><input type="radio" name="cameraLighting" value="original"><span>Original</span></label>
+              <label><input type="radio" name="cameraLighting" value="balanced"><span>Balanced</span></label>
+            </div>
+          </fieldset>
+          <p class="note">Balanced gently lifts shadows and softens highlights. It does not add HDR detail.</p>
+          <fieldset class="segmented" data-setting="fps">
+            <legend>Screen frame rate</legend>
+            <div class="seg">
+              <label><input type="radio" name="fps" value="30"><span>30 fps</span></label>
+              <label><input type="radio" name="fps" value="60"><span>60 fps</span></label>
+            </div>
+          </fieldset>
+          <fieldset class="segmented" data-setting="quality">
+            <legend>Quality</legend>
+            <div class="seg">
+              <label><input type="radio" name="quality" value="high"><span>High</span></label>
+              <label><input type="radio" name="quality" value="very_high"><span>Very high</span></label>
+              <label><input type="radio" name="quality" value="ultra"><span>Ultra</span></label>
+            </div>
+          </fieldset>
+          <fieldset class="segmented" data-setting="resolution">
+            <legend>Resolution</legend>
+            <div class="seg">
+              <label><input type="radio" name="resolution" value="0x0"><span>Match source</span></label>
+              <label><input type="radio" name="resolution" value="1920x1080"><span>1080p</span></label>
+            </div>
+          </fieldset>
+        </div>
+      </details>
+    </section>
+
+    <section class="panel recordings" aria-labelledby="recordings-heading">
+      <div class="panel-head">
+        <h2 id="recordings-heading">Recordings</h2>
+        <button type="button" class="btn btn-quiet folder-btn" id="open-folder" title="Open folder">
+          <svg class="icon" aria-hidden="true"><use href="#i-folder"/></svg>
+          <span class="path" id="output-dir"></span>
+        </button>
+      </div>
+      <ul class="recent" id="recent"></ul>
+      <p class="empty" id="recent-empty" hidden>No recordings yet.</p>
+    </section>
+  </main>
+
+  <section class="editor" id="editor" aria-label="Edit recording">
+    <p class="editor-empty" id="editor-empty">Choose Edit on a recording to open it here.</p>
+    <div class="editor-main" id="editor-main" hidden>
+      <div class="editor-head">
+        <h2 class="edit-name" id="edit-name"></h2>
+        <span class="edit-meta mono" id="edit-meta"></span>
+      </div>
+      <div class="stage">
+        <video id="video" preload="metadata" playsinline disablepictureinpicture></video>
+        <p class="stage-msg" id="stage-msg" hidden></p>
+      </div>
+      <div class="playbar">
+        <button type="button" class="icon-btn play-btn" id="play" aria-label="Play" title="Play (Space)"><svg class="icon"><use href="#i-play"/></svg></button>
+        <span class="clock mono"><span id="clock-now">0:00.0</span><span class="clock-sep"> / </span><span id="clock-total">0:00.0</span></span>
+        <select id="playback-speed" class="playback-speed" aria-label="Playback speed" title="Preview speed">
+          <option value="0.5">0.5×</option><option value="1" selected>1×</option>
+          <option value="1.25">1.25×</option><option value="1.5">1.5×</option>
+          <option value="1.75">1.75×</option><option value="2">2×</option><option value="3">3×</option>
+        </select>
+        <span class="edit-summary" id="edit-summary"></span>
+      </div>
+      <div class="waveform-tools"><span id="waveform-status" role="status">Audio waveform</span><div><button type="button" class="btn btn-quiet" id="zoom-out" aria-label="Zoom out">−</button><span id="zoom-level">1×</span><button type="button" class="btn btn-quiet" id="zoom-in" aria-label="Zoom in">+</button></div></div>
+      <div class="timeline-viewport" id="timeline-viewport" title="Super/Command + scroll to zoom">
+      <div class="timeline" id="timeline" tabindex="0" role="slider" aria-label="Playback position" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0">
+        <div class="track" id="track">
+          <canvas id="waveform" aria-label="Recording audio waveform"></canvas>
+          <div class="removed-layer" id="removed"></div>
+          <div class="selection" id="selection" hidden>
+            <span class="handle" data-edge="start"></span>
+            <span class="handle" data-edge="end"></span>
+          </div>
+          <div class="playhead" id="playhead"></div>
+        </div>
+        <div class="scale mono" id="scale" aria-hidden="true"></div>
+      </div>
+      </div>
+      <div class="edit-tools">
+        <div class="range-inputs" role="group" aria-label="Selection">
+          <label class="time-field"><span>Start</span><input type="text" id="sel-start" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="0:00.0"></label>
+          <label class="time-field"><span>End</span><input type="text" id="sel-end" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="0:00.0"></label>
+        </div>
+        <div class="tool-group">
+          <button type="button" class="btn btn-quiet" id="cut" title="Cut selection (Super/Command+B or Delete)"><svg class="icon" aria-hidden="true"><use href="#i-cut"/></svg><span>Cut</span></button>
+          <button type="button" class="btn btn-quiet" id="trim" title="Keep only the selection">Trim to selection</button>
+        </div>
+        <div class="tool-group history">
+          <button type="button" class="btn btn-quiet" id="undo" title="Undo (Ctrl+Z)"><svg class="icon" aria-hidden="true"><use href="#i-undo"/></svg><span>Undo</span></button>
+          <button type="button" class="btn btn-plain" id="reset">Reset edits</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="sharebar">
+    <span class="note">vidcapture.stream</span>
+    <div class="actions"><button type="button" class="btn btn-quiet" id="video-library">Video library</button><button type="button" class="btn btn-quiet" id="share-video">Share video</button><button type="button" class="btn btn-solid" id="copy-card" hidden>Copy video card</button><button type="button" class="btn btn-quiet" id="copy-share" hidden>Copy link</button></div>
+  </div>
+  <div class="jobbar" id="jobbar" hidden>
+    <span class="job-mark" aria-hidden="true"><span class="spinner"></span><svg class="icon i-done"><use href="#i-check"/></svg><svg class="icon i-fail"><use href="#i-alert"/></svg></span>
+    <div class="job-text" role="status" aria-live="polite">
+      <span class="job-title" id="job-title"></span>
+      <span class="job-detail" id="job-detail"></span>
+    </div>
+    <div class="job-actions">
+      <button type="button" class="btn btn-quiet" id="job-cancel">Cancel</button>
+      <button type="button" class="btn btn-quiet" id="job-open">Open result</button>
+      <button type="button" class="btn btn-quiet" id="job-edit">Edit result</button>
+      <button type="button" class="icon-btn" id="job-dismiss" aria-label="Dismiss" title="Dismiss"><svg class="icon"><use href="#i-x"/></svg></button>
+    </div>
+  </div>
+
+  <footer class="editbar" aria-label="Edit actions">
+    <div class="edit-status-wrap">
+      <div class="edit-status" id="edit-status" aria-live="polite"></div>
+      <div class="folio-help" id="folio-help"></div>
+    </div>
+    <div class="actions">
+      <select id="enhance-mode" aria-label="Audio enhancement method"><option value="quick">Quick studio</option><option value="quick-quiet" selected>Quick studio, less noise</option><option value="folio">Folio studio</option></select>
+      <button type="button" class="btn btn-quiet" id="enhance">Enhance audio</button>
+      <button type="button" class="btn btn-solid" id="export"><span class="spinner" aria-hidden="true"></span><span>Save edited copy</span></button>
+    </div>
+  </footer>
+
+  <footer class="transport" aria-label="Recording controls">
+    <div class="readout">
+      <div class="time" id="time" role="timer" aria-label="Elapsed time">00:00:00</div>
+      <div class="status-line">
+        <span class="dot" aria-hidden="true"></span>
+        <span class="status" id="status" aria-live="polite"></span>
+      </div>
+    </div>
+    <div class="actions">
+      <button type="button" class="btn btn-quiet" id="edit-last" hidden><svg class="icon" aria-hidden="true"><use href="#i-cut"/></svg><span class="label">Edit</span></button>
+      <button type="button" class="btn btn-quiet" id="open-last" hidden><svg class="icon" aria-hidden="true"><use href="#i-play"/></svg><span class="label">Open</span></button>
+      <button type="button" class="btn btn-quiet" id="pause" hidden><svg class="icon" aria-hidden="true"><use href="#i-pause"/></svg><span class="label">Pause</span></button>
+      <button type="button" class="btn btn-record" id="primary"><span class="rec-mark" aria-hidden="true"></span><span class="spinner" aria-hidden="true"></span><span id="primary-label">Start recording</span></button>
+    </div>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

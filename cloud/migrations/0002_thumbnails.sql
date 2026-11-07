@@ -1,0 +1,1 @@
+ALTER TABLE videos ADD COLUMN thumbnail_ready INTEGER NOT NULL DEFAULT 0;

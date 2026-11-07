@@ -1,0 +1,65 @@
+diff --git i/src/capture/kms.c w/src/capture/kms.c
+index 0731d84..ee150f8 100644
+--- i/src/capture/kms.c
++++ w/src/capture/kms.c
+@@ -9,6 +9,9 @@
+ #include <string.h>
+ #include <unistd.h>
+ #include <fcntl.h>
++#include <stdio.h>
++#include <sys/time.h>
++#include <math.h>
+ 
+ #include <xf86drm.h>
+ #include <xf86drmMode.h>
+@@ -32,6 +35,7 @@ typedef struct {
+ 
+ typedef struct {
+     gsr_capture_kms_params params;
++    bool capture_follow_hidden;
+ 
+     vec2i capture_pos;
+     vec2i capture_size;
+@@ -840,8 +844,34 @@ static void gsr_capture_kms_update_connector_ids(gsr_capture_kms *self) {
+         self->capture_size = rotate_capture_size_if_rotated(self, monitor.size, self->display_server_monitor_rotation);
+ }
+ 
++/* Capture app extension: a private, atomically replaced state file supplies a
++ * tracked crop in physical monitor coordinates. Missing/stale state draws black. */
++static void capture_follow_update(gsr_capture_kms *self, gsr_color_conversion *color_conversion) {
++    const char *path = getenv("CAPTURE_FOLLOW_STATE");
++    if(!path || !path[0]) return;
++    int valid = 0, x = 0, y = 0, w = 0, h = 0;
++    double updated = 0.0;
++    FILE *file = fopen(path, "r");
++    int fields = file ? fscanf(file, "%d %lf %d %d %d %d", &valid, &updated, &x, &y, &w, &h) : 0;
++    if(file) fclose(file);
++    struct timeval now;
++    gettimeofday(&now, NULL);
++    double age = now.tv_sec + now.tv_usec / 1000000.0 - updated;
++    self->capture_follow_hidden = fields != 6 || valid != 1 || !isfinite(updated) || age > 0.75 || age < -2.0
++        || x < 0 || y < 0 || w < 32 || h < 32 || x > 32768 || y > 32768 || w > 16384 || h > 16384;
++    if(self->capture_follow_hidden) {
++        color_conversion->schedule_clear = true;
++        return;
++    }
++    if(self->params.region_size.x != w || self->params.region_size.y != h)
++        color_conversion->schedule_clear = true;
++    self->params.region_position = (vec2i){x, y};
++    self->params.region_size = (vec2i){w, h};
++}
++
+ static void gsr_capture_kms_pre_capture(gsr_capture *cap, gsr_capture_metadata *capture_metadata, gsr_color_conversion *color_conversion) {
+     gsr_capture_kms *self = cap->priv;
++    capture_follow_update(self, color_conversion);
+ 
+     if(self->params.kms_response->num_items == 0) {
+         static bool error_shown = false;
+@@ -970,6 +1000,7 @@ static void render_drm_plane(gsr_capture_kms *self, gsr_color_conversion *color_
+ 
+ static int gsr_capture_kms_capture(gsr_capture *cap, gsr_capture_metadata *capture_metadata, gsr_color_conversion *color_conversion) {
+     gsr_capture_kms *self = cap->priv;
++    if(self->capture_follow_hidden) return 0;
+ 
+     if(!self->drm_fd || self->params.kms_response->num_items == 0)
+         return -1;
