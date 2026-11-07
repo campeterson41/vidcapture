@@ -61,6 +61,9 @@ h2 {
 
 p { margin: 0; }
 
+/* Anything hidden stays hidden, whatever display its class sets. */
+[hidden] { display: none !important; }
+
 button, select, input { font: inherit; color: inherit; }
 
 button { cursor: pointer; }
@@ -712,7 +715,8 @@ body[data-phase="recording"] .status { color: var(--text); }
 body[data-view="edit"] .content,
 body[data-view="edit"] .transport,
 body[data-view="record"] .editor,
-body[data-view="record"] .editbar { display: none; }
+body[data-view="record"] .editbar,
+body[data-view="edit"]:not(.has-session) .editbar { display: none; }
 
 /* Editor */
 
@@ -729,6 +733,10 @@ body[data-view="record"] .editbar { display: none; }
 
 .editor-empty {
   margin: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
   color: var(--faint);
   text-align: center;
 }
@@ -782,7 +790,8 @@ body[data-view="record"] .editbar { display: none; }
 .play-btn { width: 36px; height: 36px; background: var(--raised); color: var(--text); }
 .play-btn .icon { width: 16px; height: 16px; }
 .clock { color: var(--text); white-space: nowrap; }
-.playback-speed { width: 76px; min-height: 34px; padding: 4px 8px; flex: none; font-size: 13px; }
+.playback-speed { width: 76px; min-height: 34px; padding: 4px 8px; flex: none; font-size: 13px; border: 0; border-radius: 6px; background: var(--raised); color-scheme: dark; }
+.playback-speed:hover:not(:disabled) { background: var(--raised-hover); }
 @media (max-width: 480px) { .playbar { flex-wrap: wrap; } .playbar .edit-summary { flex-basis: 100%; text-align: right; } }
 .clock-sep, #clock-total { color: var(--faint); }
 .edit-summary {
@@ -987,6 +996,7 @@ body[data-view="record"] .editbar { display: none; }
 .jobbar[data-status="failed"] .i-fail { display: block; color: var(--alert-ink); }
 .job-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .job-title { font-weight: 500; }
+.job-code { color: var(--text); font-family: var(--mono); font-weight: 600; letter-spacing: 0.04em; }
 .job-detail { color: var(--muted); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .jobbar[data-status="failed"] .job-detail { color: var(--alert-ink); white-space: normal; overflow-wrap: anywhere; }
 .job-actions { display: flex; align-items: center; gap: 6px; flex: none; }
@@ -1040,7 +1050,7 @@ body[data-view="edit"]:not(.has-session) .sharebar { display:none; }
 @media(max-width:480px) { .sharebar { padding:10px 16px; flex-wrap:wrap; } }
 
 /* Audio enhancement methods stay visible beside the action. */
-#enhance-mode { height: 40px; max-width: 170px; background: var(--raised); border: 0; border-radius: 6px; padding: 0 8px; font-size: 12px; }
+#enhance-mode { color-scheme: dark; height: 40px; max-width: 170px; background: var(--raised); border: 0; border-radius: 6px; padding: 0 8px; font-size: 12px; }
 .editbar { flex-wrap: wrap; }
 .editbar .actions { flex-wrap: wrap; }
 @media (max-width: 600px) {
@@ -1194,6 +1204,13 @@ body[data-view="library"] #share-video { display: none; }
 .library-meta { color: var(--muted); font-size: 12.5px; }
 .library-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .library-actions [hidden] { display: none; }
+.library-actions .icon-btn { width: 36px; height: 36px; color: var(--muted); }
+.library-actions .icon-btn:hover:not(:disabled) { color: var(--text); }
+#library-delete { width: 36px; padding: 0; justify-content: center; }
+#library-delete .label:empty { display: none; }
+#library-delete.is-armed { width: auto; padding: 0 12px; }
+.rename-input { width: 100%; height: 28px; margin: -3px 0 -1px -8px; padding: 0 8px; border: 0; border-radius: 6px; background: var(--raised); color: var(--text); font-size: 15px; font-weight: 600; }
+.rename-error { margin: 6px 0 0; color: #f0897c; font-size: 12px; line-height: 1.4; }
 .library-share-note { flex-basis: 100%; color: var(--faint); font-size: 12.5px; }
 .library-share-note[hidden] { display: none; }
 

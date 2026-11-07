@@ -1,12 +1,41 @@
 {
   "manifest_version": 3,
   "name": "VidCapture",
-  "version": "0.1.0",
-  "description": "Record on your computer with VidCapture, and turn pasted VidCapture links into video previews in Gmail.",
+  "version": "0.2.0",
+  "description": "Control your VidCapture recording, camera, and microphone from Chrome. Keep recording as you switch tabs.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAi9PmdzW5ipGDz8Fxrtvq+ByouFekFj7sVGkJGXF8dthdEocoCe5vP6SLHJV6HD3SWpZ3xC4HN/3nTinBvtAaMX5ySRsGQ2HAAsFKUgjFakaNx2i92ItERdwRf5sHR4bOAvtrZ3+fqsMVQOTy0FMg8cllugAg4bwUzTCiJ76RDwNWBbGI3kK6K1AxPLj82nFzl7dZzvAIeHGgpgm7PR/gAXgWJ4P15EYvdjYnOQcphPBkTkN8uTteKxNScGSfPPvZRh1lwuWqpDf3d9rkMWX+4fQU9FLezQKMkYY1MX3i5eIeHBQq3ONxCUMTDNgnoVlxcAuyptLr0rr2HqetFwld3QIDAQAB",
-  "icons": {"16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png"},
-  "action": {"default_title": "VidCapture", "default_popup": "popup.html", "default_icon": {"16": "icons/icon-16.png", "32": "icons/icon-32.png"}},
-  "permissions": ["nativeMessaging"],
-  "host_permissions": ["https://vidcapture.stream/*"],
-  "content_scripts": [{"matches": ["https://mail.google.com/*"], "js": ["gmail.js"], "run_at": "document_idle"}]
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "action": {
+    "default_title": "VidCapture",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png"
+    }
+  },
+  "permissions": [
+    "nativeMessaging"
+  ],
+  "host_permissions": [
+    "https://vidcapture.stream/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://mail.google.com/*"
+      ],
+      "js": [
+        "gmail.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  }
 }

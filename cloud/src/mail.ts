@@ -2,8 +2,9 @@
 // SES_ACCESS_KEY_ID and SES_SECRET_ACCESS_KEY sends through Amazon SES instead
 // (region SES_REGION, default us-east-1), which needs the sender's domain verified there.
 
+import {optional} from './util';
+
 export type Mail = { from:{email:string;name:string}; to:string; subject:string; text:string; html:string };
-type SesEnv = { SES_ACCESS_KEY_ID?:string; SES_SECRET_ACCESS_KEY?:string; SES_REGION?:string };
 
 const enc = new TextEncoder();
 const hex = (buf:ArrayBuffer)=>Array.from(new Uint8Array(buf),b=>b.toString(16).padStart(2,'0')).join('');
@@ -31,7 +32,7 @@ export async function signAws(opts:{accessKey:string;secretKey:string;region:str
 const quoteName = (name:string)=>`"${name.replace(/["\\\r\n]/g,'')}"`;
 
 export async function sendMail(env:Env,mail:Mail):Promise<{messageId:string|null}>{
- const ses=env as unknown as SesEnv;
+ const ses=optional(env);
  if(!ses.SES_ACCESS_KEY_ID||!ses.SES_SECRET_ACCESS_KEY){
   const sent=await env.EMAIL.send(mail);
   return {messageId:sent?.messageId??null};

@@ -9,7 +9,7 @@
   "assets": {"directory": "public", "binding": "ASSETS", "run_worker_first": true},
   "d1_databases": [{"binding": "DB", "database_name": "my-vidcapture", "database_id": "REPLACE_WITH_YOUR_D1_ID", "migrations_dir": "migrations"}],
   "r2_buckets": [{"binding": "VIDEOS", "bucket_name": "my-vidcapture-videos"}],
-  "vars": {"SITE_ORIGIN": "https://my-vidcapture.YOUR-SUBDOMAIN.workers.dev", "EMAIL_FROM": "no-reply@YOUR-EMAIL-DOMAIN"},
+  "vars": {"SITE_ORIGIN": "https://my-vidcapture.YOUR-SUBDOMAIN.workers.dev", "EMAIL_FROM": "no-reply@YOUR-EMAIL-DOMAIN", "TURNSTILE_SITEKEY": "YOUR_TURNSTILE_SITE_KEY", "TURNSTILE_HOSTNAMES": "my-vidcapture.YOUR-SUBDOMAIN.workers.dev"},
   "send_email": [{"name": "EMAIL", "allowed_sender_addresses": ["no-reply@YOUR-EMAIL-DOMAIN"]}],
-  "triggers": {"crons": ["15 4 * * *"]}
+  "triggers": {"crons": ["15 4 * * *", "0 13 * * 1"]}
 }

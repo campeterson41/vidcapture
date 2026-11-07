@@ -3,7 +3,7 @@
 // and by the picker page (as window.VidGeometry). All rectangles use Hyprland's
 // logical layout coordinates, the same space slurp and the recorder use.
 (function (root) {
-  const OWN_CLASS = /^capture(?:-|$)/;
+  const OWN_CLASS = /^(?:vid)?capture(?:-|$)/;
   const INTERNAL = /^eDP|^LVDS/;
 
   function logicalMonitor(m) {

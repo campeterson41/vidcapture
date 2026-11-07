@@ -1,4 +1,4 @@
-const ownClass=c=>/^capture(?:-|$)/.test(c.class||'');
+const ownClass=c=>/^(?:vid)?capture(?:-|$)/.test(c.class||'');
 function selectedWindow(clients,region){
   return clients.filter(c=>c.mapped&&!c.hidden&&!ownClass(c)&&c.size?.[0]>=32&&c.size?.[1]>=32)
     .filter(c=>Math.abs(c.at[0]-region.x)<=3&&Math.abs(c.at[1]-region.y)<=3&&Math.abs(c.size[0]-region.width)<=3&&Math.abs(c.size[1]-region.height)<=3)

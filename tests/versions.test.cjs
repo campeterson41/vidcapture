@@ -46,3 +46,42 @@ test('restoring writes the pick and renaming moves every version together',async
     assert.equal(g.name,'Demo 2026-11-07 09.05-edited-1794050000000.mp4');
   }finally{await r.dispose();await fs.rm(root,{recursive:true,force:true});}
 });
+test('renaming sets the title on the whole recording and keeps files in place',async()=>{
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'capture-rename-'));
+  const data=path.join(root,'state'),out=path.join(root,'videos');await fs.mkdir(data);await fs.mkdir(out);
+  const r=new Recorder({dataDir:data,outputDir:out});
+  try{
+    for(const n of ['Demo 2026-11-07 09.05.mp4','Demo 2026-11-07 09.05-edited-1794050000000.mp4'])await fs.writeFile(path.join(out,n),n);
+    await fs.writeFile(path.join(data,'Demo 2026-11-07 09.05.mp4.json'),JSON.stringify({keep:[[0,1]],title:'Old'}));
+    const lib=new Library(r,{run:async()=>{throw new Error('no ffmpeg in tests');}});
+    const items=await lib.rename('Demo 2026-11-07 09.05.mp4','  Q4   plan\nreview ');
+    assert.equal(items[0].title,'Q4 plan review');
+    const meta=JSON.parse(await fs.readFile(path.join(data,'Demo 2026-11-07 09.05.mp4.json'),'utf8'));
+    assert.deepEqual(meta,{keep:[[0,1]],title:'Q4 plan review'});
+    assert.equal((await fs.readdir(out)).length,2);
+    await assert.rejects(lib.rename('Demo 2026-11-07 09.05.mp4','   '),/Enter a name/);
+    await assert.rejects(lib.rename('Demo 2026-11-07 09.05.mp4','x'.repeat(121)),/120/);
+    await assert.rejects(lib.rename('../escape.mp4','A'),/Choose a file/);
+    await assert.rejects(lib.rename('Missing.mp4','A'));
+  }finally{await r.dispose();await fs.rm(root,{recursive:true,force:true});}
+});
+test('removing moves only that recording and its versions to the trash',async()=>{
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'capture-remove-'));
+  const data=path.join(root,'state'),out=path.join(root,'videos');await fs.mkdir(data);await fs.mkdir(out);
+  const r=new Recorder({dataDir:data,outputDir:out});
+  try{
+    for(const n of ['A.mp4','A-edited-1794050000000.mp4','A-edited-1794050000000-enhanced-1794050100000.mp4','AB.mp4','B.mp4','notes.txt'])await fs.writeFile(path.join(out,n),n);
+    const lib=new Library(r,{run:async()=>{throw new Error('no ffmpeg in tests');}});
+    const trashed=[];const trash=async f=>{trashed.push(path.basename(f));await fs.rm(f);};
+    const items=await lib.remove('A.mp4',trash);
+    assert.deepEqual(trashed.sort(),['A-edited-1794050000000-enhanced-1794050100000.mp4','A-edited-1794050000000.mp4','A.mp4']);
+    assert.deepEqual(items.map(i=>i.root).sort(),['AB.mp4','B.mp4']);
+    assert.deepEqual((await fs.readdir(out)).sort(),['AB.mp4','B.mp4','notes.txt']);
+    await assert.rejects(lib.remove('notes.txt',trash),/Choose a file/);
+    r.state.phase='recording';
+    await assert.rejects(lib.remove('B.mp4',trash),/Finish recording/);
+    r.state.phase='idle';r.state.job={running:true};
+    await assert.rejects(lib.remove('B.mp4',trash),/Wait for the current job/);
+    assert.ok((await fs.readdir(out)).includes('B.mp4'));
+  }finally{await r.dispose();await fs.rm(root,{recursive:true,force:true});}
+});

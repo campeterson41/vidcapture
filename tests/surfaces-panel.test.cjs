@@ -247,3 +247,23 @@ test('the microphone level is not read while busy or with no microphone',()=>{
   rec.state.settings.microphone='default_input';rec.state.phase='recording';
   s.syncLevel();assert.equal(s.level,undefined);
 });
+
+test('saving settings from the panel brings the live mic chain along',async()=>{
+  const saved=[];let synced=0;
+  const rec=makeRecorder({saveSettings:async p=>{saved.push(p);Object.assign(rec.state.settings,p);}});
+  const s=new Surfaces({recorder:rec,showMain(){},hideMain(){},onSettings:async()=>{synced++;assert.equal(rec.state.settings.mic,'demo-mic','sync sees the new mic');}});
+  s.panelState=()=>({});
+  await s.panelSave({mic:'demo-mic'});
+  assert.deepEqual(saved,[{mic:'demo-mic'}]);assert.equal(synced,1);
+});
+
+test('the panel state carries a microphone cleanup failure, and Try again reruns the sync',async()=>{
+  let synced=0;
+  const rec=makeRecorder();rec.state.micCleanupError='Microphone cleanup did not start in time.';
+  const s=new Surfaces({recorder:rec,showMain(){},hideMain(){},onSettings:async()=>{synced++;rec.state.micCleanupError=null;}});
+  assert.equal(s.panelState(false).micCleanupError,'Microphone cleanup did not start in time.');
+  const after=await s.panelRetryMic();
+  assert.equal(synced,1);assert.equal(after.micCleanupError,null,'cleared after a successful recovery');
+  rec.state.phase='recording';
+  await assert.rejects(s.panelRetryMic(),/Stop and save this recording first/);assert.equal(synced,1,'never during a take');
+});

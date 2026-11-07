@@ -6,7 +6,7 @@ const fs=require('node:fs/promises');
 const path=require('node:path');
 const crypto=require('node:crypto');
 const {execFile}=require('node:child_process');
-const {shareView}=require('./shares.cjs');
+const {shareView,updateMeta}=require('./shares.cjs');
 const {promisify}=require('node:util');
 const execRun=promisify(execFile);
 
@@ -41,7 +41,7 @@ function groupVersions(items,metas=new Map(),origin=null){
       const chosen=list.find(i=>i.name===base+pick.suffix);
       if(chosen&&!list.some(i=>i!==chosen&&Date.parse(i.modified)>pick.at))current=chosen;
     }
-    out.push({...current,title:original.title,recordedAt:original.recordedAt||current.recordedAt,root:original.name,
+    out.push({...current,title:original.title,dated:original.dated,recordedAt:original.recordedAt||current.recordedAt,root:original.name,
       versions:list.map(v=>({name:v.name,path:v.path,key:v.key,variant:v.variant,label:v===original?'Original':(v.variant||'Copy'),modified:v.modified,bytes:v.bytes,
         duration:v.duration,poster:v.poster,unreadable:v.unreadable,current:v===current,original:v===original,share:origin?shareView(metas.get(v.name),origin):null}))});
   }
@@ -89,7 +89,7 @@ function recordingTitle(name,options={},meta=null){
   if(saved&&!Number.isNaN(saved.getTime())&&(!recordedAt||parsed.title))recordedAt=saved;
   const named=meta&&typeof meta.title==='string'&&meta.title.trim()?meta.title.trim():parsed.title;
   const title=named||(recordedAt?formatTitle(recordedAt,options):path.basename(name,path.extname(name)).replace(/^Capture-/,'')||name);
-  return {title,variant:parsed.variant,recordedAt:recordedAt?recordedAt.toISOString():null};
+  return {title,dated:!named&&!!recordedAt,variant:parsed.variant,recordedAt:recordedAt?recordedAt.toISOString():null};
 }
 
 function cacheKey(name,size,mtimeMs){
@@ -156,6 +156,38 @@ class Library{
     let meta={};try{meta=JSON.parse(await fs.readFile(file,'utf8'));}catch{}
     meta.currentVersion={suffix:name.slice(base.length),at:Date.now()};
     await fs.writeFile(file+'.tmp',JSON.stringify(meta),{mode:0o600});await fs.rename(file+'.tmp',file);
+    return this.list();
+  }
+  // Every file of one recording: the original and its edited and enhanced copies.
+  async versionFiles(root){
+    if(!isRecordingName(root))throw new Error('Choose a file from your Capture recordings.');
+    await this.rec.allowedFile(path.join(this.rec.outputDir,root));
+    const base=versionBase(root),out=[];
+    for(const name of await fs.readdir(this.rec.outputDir).catch(()=>[])){
+      if(!isRecordingName(name)||versionBase(name)!==base)continue;
+      const file=path.join(this.rec.outputDir,name);
+      if(file===this.rec.rawFile)continue;
+      out.push(await this.rec.allowedFile(file));
+    }
+    return out;
+  }
+  // The title shown everywhere for a recording. It is kept in the original's
+  // sidecar; a recording still named Capture-<time> is renamed to match later.
+  async rename(root,title){
+    const clean=String(title??'').replace(/[\x00-\x1f]/g,' ').replace(/\s+/g,' ').trim();
+    if(!clean)throw new Error('Enter a name.');
+    if(clean.length>120)throw new Error('Use a name up to 120 characters.');
+    await this.versionFiles(root);
+    await updateMeta(this.rec.dataDir,root,m=>{m.title=clean;});
+    return this.list();
+  }
+  // Moves every version of a recording to the Trash, so a mistake can be undone there.
+  async remove(root,trash){
+    if(['starting','recording','paused','stopping'].includes(this.rec.state.phase))throw new Error('Finish recording first.');
+    if(this.rec.state.job?.running)throw new Error('Wait for the current job to finish.');
+    const files=await this.versionFiles(root);
+    for(const file of files)await trash(file);
+    await this.rec.refreshRecent?.();
     return this.list();
   }
   // Returns {duration, poster, unreadable} for one recording, creating the poster if needed.

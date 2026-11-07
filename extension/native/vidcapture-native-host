@@ -1,17 +1,53 @@
-#!/usr/bin/env node
+#!/usr/bin/node
 'use strict';
-// Chrome native messaging host for the VidCapture extension. Its only job is to
-// open the local desktop app. It never reads or sends recordings.
-const {spawn}=require('node:child_process'),os=require('node:os'),fs=require('node:fs');
-const launcher=process.env.VIDCAPTURE_LAUNCHER||os.homedir()+'/.local/bin/capture';
-let buffer=Buffer.alloc(0);
-function reply(message){const body=Buffer.from(JSON.stringify(message)),head=Buffer.alloc(4);head.writeUInt32LE(body.length);process.stdout.write(Buffer.concat([head,body]),()=>process.exit(0));}
+// Native messaging transports commands only. The desktop app owns all media.
+const net=require('node:net'),path=require('node:path'),os=require('node:os');
+const {spawn}=require('node:child_process');
+const socketPath=process.env.VIDCAPTURE_SOCKET||path.join(os.homedir(),'.local/state/capture/extension.sock');
+const launcher=process.env.VIDCAPTURE_LAUNCHER||path.join(os.homedir(),'.local/bin/capture');
+const allowed=new Set(['status','sources','configure','select','pick','preview','start','pause','resume','stop','open','library']);
+const origin=process.argv[2];
+if(origin&&origin!=='chrome-extension://dagpaflngbhbgpeichcnhalplkdmkfie/')process.exit(1);
+let buffer=Buffer.alloc(0),launch=null;
+process.stdout.on('error',()=>process.exit(0));
+function reply(message){const body=Buffer.from(JSON.stringify(message)),head=Buffer.alloc(4);head.writeUInt32LE(body.length);process.stdout.write(Buffer.concat([head,body]));}
+function request(message){return new Promise((resolve,reject)=>{
+ const c=net.createConnection(socketPath);let data='';
+ c.setTimeout(170000,()=>c.destroy(new Error('VidCapture took too long to respond. Reopen the extension to check its status.')));
+ c.on('error',reject);c.once('connect',()=>c.write(JSON.stringify(message)+'\n'));
+ c.on('data',b=>{data+=b.toString();if(data.length>256*1024){c.destroy(new Error('Invalid desktop response.'));return;}const end=data.indexOf('\n');if(end>=0){try{resolve(JSON.parse(data.slice(0,end)));}catch{reject(new Error('Invalid desktop response.'));}c.destroy();}});
+ c.on('end',()=>{if(!data.includes('\n'))reject(new Error('VidCapture disconnected. Reopen the extension to check its status.'));});
+});}
+async function ensureApp(){
+ if(launch)return launch;
+ launch=(async()=>{
+  await new Promise((resolve,reject)=>{const child=spawn(launcher,['--extension-service'],{detached:true,stdio:'ignore'});child.once('error',()=>reject(new Error('VidCapture could not open. Check that the desktop app is installed.')));child.once('spawn',()=>{child.unref();resolve();});});
+  for(let i=0;i<60;i++){
+   await new Promise(r=>setTimeout(r,250));
+   try{await request({id:'startup-status',action:'status'});return;}catch(e){if(!['ENOENT','ECONNREFUSED'].includes(e.code))throw e;}
+  }
+  throw new Error('The desktop app needs to be updated or restarted before browser controls can connect.');
+ })().finally(()=>{launch=null;});return launch;
+}
+async function handle(m){
+ const id=m?.id;
+ try{
+  if(!allowed.has(m?.action)||typeof id!=='string'||!/^[a-zA-Z0-9-]{8,80}$/.test(id))throw new Error('Unknown or invalid action.');
+  let response;
+  try{response=await request(m);}catch(e){
+   if(!['ENOENT','ECONNREFUSED'].includes(e.code))throw e;
+   if(['pause','resume','stop'].includes(m.action))throw new Error('The recorder is disconnected. Open VidCapture to check your recording.');
+   await ensureApp();response=await request(m);
+  }
+  reply({id,...response});
+ }catch(e){reply({id,ok:false,error:e.message});}
+}
 process.stdin.on('data',chunk=>{
- buffer=Buffer.concat([buffer,chunk]);if(buffer.length<4)return;const size=buffer.readUInt32LE(0);if(size>4096)return reply({ok:false,error:'Message too large.'});if(buffer.length<4+size)return;
- let message;try{message=JSON.parse(buffer.subarray(4,4+size).toString());}catch{return reply({ok:false,error:'Invalid message.'});}
- if(message?.action!=='record')return reply({ok:false,error:'Unknown action.'});
- if(!fs.existsSync(launcher))return reply({ok:false,error:'VidCapture is not installed on this computer. Install the desktop app to record.'});
- // The app keeps a single instance, so this opens it or brings the open window forward.
- const child=spawn(launcher,[],{detached:true,stdio:'ignore'});child.on('error',()=>reply({ok:false,error:'VidCapture could not start.'}));child.unref();setTimeout(()=>reply({ok:true}),150);
+ buffer=Buffer.concat([buffer,chunk]);
+ while(buffer.length>=4){
+  const size=buffer.readUInt32LE(0);if(size>8192){reply({ok:false,error:'Message too large.'});process.exitCode=1;process.stdin.destroy();return;}
+  if(buffer.length<size+4)return;
+  const body=buffer.subarray(4,size+4);buffer=buffer.subarray(size+4);
+  try{handle(JSON.parse(body.toString()));}catch{reply({ok:false,error:'Invalid message.'});}
+ }
 });
-process.stdin.on('end',()=>{if(buffer.length<4)process.exit(0);});

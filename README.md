@@ -4,7 +4,7 @@ A Loom-style recorder for Omarchy. Record your screen with a camera bubble, edit
 
 VidCapture records a window, area, or display with your microphone, system audio, and an optional circular camera. Cut and trim with a word-level transcript, remove filler words, and save a new MP4. Recording and editing work without an account and stay on your computer. Sharing is optional: use a free vidcapture.stream account, or deploy the sharing server in your own Cloudflare account.
 
-**Early source release, v0.1.0-alpha.4.** Tested on one Omarchy workstation with Hyprland 0.56.2, Electron 43, GPU Screen Recorder 6.1.4, FFmpeg 9, and an NVIDIA Quadro T2000 alongside Intel graphics. Broader hardware compatibility is not yet established.
+**Early source release, v0.1.0-alpha.5.** Tested on one Omarchy workstation with Hyprland 0.56.2, Electron 43, GPU Screen Recorder 6.1.4, FFmpeg 9, and an NVIDIA Quadro T2000 alongside Intel graphics. Broader hardware compatibility is not yet established.
 
 [Project website](https://vidcapture.stream) · [Releases](https://github.com/campeterson41/vidcapture/releases) · [Report a bug](https://github.com/campeterson41/vidcapture/issues)
 
@@ -33,7 +33,7 @@ Then clone, build the two helpers, and install:
 ```sh
 git clone https://github.com/campeterson41/vidcapture.git
 cd vidcapture
-git checkout v0.1.0-alpha.4
+git checkout v0.1.0-alpha.5
 ./engine/build.sh
 ./engine/build-camera.sh
 ./install.sh
@@ -79,7 +79,7 @@ A camera profile is optional tuning for one camera model, written as JSON and ma
 
 Open a recording to edit it. Select a range on the timeline, then cut or trim. When transcription is installed, the transcript appears beside the video with each word timed: click a word to jump to it, select words to cut them, and use **Remove filler words** to cut every "um" and "uh" at the quiet moment around it. **Save version** renders a new MP4 with Intel hardware encoding when available and software encoding otherwise. The original recording is never changed.
 
-Transcription runs locally with NVIDIA Parakeet TDT 0.6B v3. No audio leaves your computer. If the [Claude Code](https://claude.com/claude-code) command line tool is installed and signed in, VidCapture also uses it for a light punctuation pass and to write titles, which sends the transcript text (never audio or video) through your own Claude account. Set `CAPTURE_POLISH=off` to turn that off.
+Transcription runs locally with NVIDIA Parakeet TDT 0.6B v3. No audio leaves your computer. If the [Claude Code](https://claude.com/claude-code) command line tool is installed and signed in, VidCapture also uses it through your own Claude account. The punctuation pass sends the transcript text. Automatic titles send up to about 700 words of the transcript, the recording's length, and the name of the window or app on screen. Audio and video files are never sent. Set `CAPTURE_POLISH=off` to skip punctuation and `CAPTURE_TITLES=off` to skip automatic titles.
 
 ## Sharing
 

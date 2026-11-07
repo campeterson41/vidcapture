@@ -53,7 +53,10 @@
  video.addEventListener('ratechange',()=>{speed.value=String(video.playbackRate);});
  for(const name of ['waiting','stalled'])video.addEventListener(name,()=>loading(true));
  for(const name of ['playing','canplay','seeked'])video.addEventListener(name,()=>loading(false));
- video.addEventListener('loadedmetadata',()=>{video.playbackRate=Number(speed.value);video.preservesPitch=true;updateTime();});
+ // Shape the frame to the video: from the server's size at once, then from the file itself.
+ const stage=video.closest('.video-stage'),frame=video.closest('.player');function shape(w,h){if(frame&&w>0&&h>0){frame.style.setProperty('--ar',`${w} / ${h}`);frame.style.setProperty('--ar-n',String(w/h));}}
+ if(stage)shape(Number(stage.dataset.width),Number(stage.dataset.height));
+ video.addEventListener('loadedmetadata',()=>{shape(video.videoWidth,video.videoHeight);video.playbackRate=Number(speed.value);video.preservesPitch=true;updateTime();});
  function showError(){loading(false);get('player-error').hidden=false;get('player-error').querySelector('p').textContent='This video could not load. Check your connection and try again.';center.hidden=true;}
  video.addEventListener('error',showError);
  get('player-retry').onclick=()=>{get('player-error').hidden=true;video.load();void play();};

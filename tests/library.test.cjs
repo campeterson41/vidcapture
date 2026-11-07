@@ -10,13 +10,13 @@ const now=()=>new Date('2026-11-07T12:00:00Z');
 
 test('titles come from the recording time in local time, with copies labeled',()=>{
   const o={now:now(),timeZone:'America/Chicago'};
-  assert.deepEqual(recordingTitle('Capture-2026-11-06T17-24-03-758Z.mkv',o),{title:'Nov 6, 11:24 AM',variant:null,recordedAt:'2026-11-06T17:24:03.758Z'});
+  assert.deepEqual(recordingTitle('Capture-2026-11-06T17-24-03-758Z.mkv',o),{title:'Nov 6, 11:24 AM',dated:true,variant:null,recordedAt:'2026-11-06T17:24:03.758Z'});
   assert.equal(recordingTitle('Capture-2026-11-06T17-24-03-758Z-edited-1793986116324.mp4',o).variant,'Edited');
   assert.equal(recordingTitle('Capture-2026-11-06T17-24-03-758Z-edited-1793986116324-enhanced-1793995502313.mp4',o).variant,'Edited, enhanced audio');
   assert.equal(recordingTitle('Capture-2026-11-06T17-24-03-758Z-edited-1-quick-studio-2.mp4',o).variant,'Edited, enhanced audio');
   assert.equal(recordingTitle('Capture-2026-11-06T15-56-52-759Z-folio-1793980717283.mp4',o).variant,'Enhanced audio');
   assert.equal(recordingTitle('Capture-2025-01-02T03-04-05-000Z.mp4',{now:now(),timeZone:'UTC'}).title,'Jan 2, 2025, 3:04 AM');
-  assert.deepEqual(recordingTitle('Capture-demo.mp4',o),{title:'demo',variant:null,recordedAt:null});
+  assert.deepEqual(recordingTitle('Capture-demo.mp4',o),{title:'demo',dated:false,variant:null,recordedAt:null});
   assert.equal(parseRecordingName('Capture-2026-13-45T10-00-00-000Z.mp4').recordedAt,null);
 });
 
@@ -34,7 +34,7 @@ test('titled recordings show their AI title, and edits keep it with a variant',(
   const e=recordingTitle('Kindly editor grid controls 2026-11-07 09.05 2-edited-1793986116324.mp4',o);
   assert.equal(e.title,'Kindly editor grid controls');assert.equal(e.variant,'Edited');
   const meta={title:'Checkout tax rounding',recordedAt:'2026-11-07T15:05:09.000Z'};
-  assert.deepEqual(recordingTitle('Capture-2026-11-07T15-05-09-000Z.mp4',o,meta),{title:'Checkout tax rounding',variant:null,recordedAt:'2026-11-07T15:05:09.000Z'});
+  assert.deepEqual(recordingTitle('Capture-2026-11-07T15-05-09-000Z.mp4',o,meta),{title:'Checkout tax rounding',dated:false,variant:null,recordedAt:'2026-11-07T15:05:09.000Z'});
   assert.equal(recordingTitle('Screen recording 2026-11-07 09.05.mp4',o,meta).recordedAt,'2026-11-07T15:05:09.000Z');
   assert.equal(recordingTitle('notes.mp4',o).title,'notes');
 });

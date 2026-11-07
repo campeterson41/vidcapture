@@ -183,6 +183,8 @@
   }
   // com.mitchellh.ghostty -> Ghostty
   function appName(cls) {
+    // Chromium app-mode windows (chrome-<host>__<path>-<profile>) are web apps, not "Localhost Default".
+    if (/^(?:chrome|chromium|brave|brave-browser|microsoft-edge|msedge|vivaldi)-[^_]+__/i.test(String(cls || ''))) return 'Web app';
     const last = String(cls || '').split('.').pop().replace(/[-_]+/g, ' ').trim();
     return last ? last.charAt(0).toUpperCase() + last.slice(1) : 'Window';
   }
@@ -518,8 +520,11 @@
   // A recording's AI title when it has one, else its file name.
   function titleOf(file) {
     if (!file) return '';
+    let known = null;
+    try { known = lib.versions.get(baseName(file)); } catch { /* the Library is not set up yet */ }
+    if (known && known.item.title) return known.item.title;
     const r = (state && Array.isArray(state.recent) ? state.recent : []).find((x) => x.path === file);
-    return (r && r.title) || baseName(file).replace(/\.(mp4|mkv)$/i, '');
+    return (r && r.title) || baseName(file).replace(/\.(mp4|mkv)$/i, '').replace(/(?:-(?:edited|enhanced|quick-studio|folio)-\d{10,})+$/, '');
   }
 
   function renderTransport(s) {
@@ -589,7 +594,9 @@
   }
 
   function renderAlert(s) {
-    const message = localError || (s && s.error) || null;
+    // A failed job already explains itself in the job bar; say it once.
+    const jobError = s && s.job && !s.job.running ? s.job.error : null;
+    const message = localError || (s && s.error && s.error !== jobError ? s.error : null) || null;
     const show = !!message && message !== dismissedError;
     el.alert.hidden = !show;
     if (show && el.alertText.textContent !== message) el.alertText.textContent = message;
@@ -615,6 +622,32 @@
     renderView(state);
     renderLibrary(state);
     renderEditorControls();
+    landAfterTake(state);
+    defaultDisplay(state);
+  }
+
+  // A take that just saved opens in Recordings, ready to watch, edit or share.
+  let lastPhase = null, landedOn = null;
+  function landAfterTake(s) {
+    const was = lastPhase;
+    lastPhase = s.phase;
+    if (s.phase !== 'saved' || !s.lastFile || s.lastFile === landedOn || !ACTIVE.has(was)) return;
+    landedOn = s.lastFile;
+    reviewRecording(s.lastFile);
+  }
+
+  // Nothing chosen yet: pick a display so Start works right away, as the record panel does.
+  let defaulted = false;
+  function defaultDisplay(s) {
+    // Only while this window is in view, so it never overrides the record panel's own default.
+    if (defaulted || document.hidden || ed.view !== 'record' || pending || s.target || s.phase !== 'idle' || s.cameraPreview || (s.job && s.job.running)) return;
+    if ((src.tab || 'screen') !== 'screen') return;
+    const ms = (s.devices && s.devices.monitors) || [];
+    if (!ms.length) return;
+    defaulted = true;
+    const memo = src.data && src.data.memo && src.data.memo.screen;
+    const pick = (memo && ms.find((m) => m.id === memo.monitor)) || ms.find((m) => /^eDP/.test(m.id)) || ms[0];
+    setTimeout(() => { if (state && !state.target && !pending) run('target', () => bridge.chooseTarget(pick.id)); }, 0);
   }
 
   /* Events */
@@ -752,7 +785,8 @@
     ST.locked = locked;
     if (!state || !state.settings) return;
     const s = state.settings;
-    const sig = [s.camera, s.microphone, s.micNoise, s.micGate, s.micRumble, state.phase === 'idle' || state.phase === 'saved' || state.phase === 'error'].join('|');
+    // A cleanup error change also reloads studio info, so the level meter follows the chain.
+    const sig = [s.camera, s.microphone, s.micNoise, s.micGate, s.micRumble, state.phase === 'idle' || state.phase === 'saved' || state.phase === 'error', state.micCleanupError || ''].join('|');
     if (sig !== ST.sig && !fromLoad) { ST.sig = sig; loadStudio(); }
     const info = ST.info || {};
 
@@ -761,7 +795,9 @@
     ST.gainRow.hidden = !mic || s.microphone === 'none';
     if (mic && !ST.editing.has('mic-gain')) { ST.gain.value = mic.percent; ST.gainValue.textContent = mic.percent + '%'; }
     ST.gain.disabled = locked;
-    const cleanupError = info.cleanup && info.cleanup.error;
+    // The error lives in recorder state, which every state update carries; ST.info is only
+    // a snapshot from the last studio load and can be out of date.
+    const cleanupError = 'micCleanupError' in state ? state.micCleanupError : (info.cleanup && info.cleanup.error);
     ST.micError.hidden = !cleanupError;
     ST.micError.textContent = cleanupError || '';
 
@@ -983,6 +1019,7 @@
     jobOpen: $('job-open'),
     jobEdit: $('job-edit'),
     jobDismiss: $('job-dismiss'),
+    jobRetry: $('job-retry'),
   };
 
   const statusText = span('');
@@ -2004,7 +2041,7 @@
     }
   });
 
-  let sharePath=null;
+  var sharePath=null,lastShare=null;
   $('video-library').addEventListener('click',()=>run('library',()=>bridge.openLibrary()));
   $('share-video').addEventListener('click',()=>{
     sharePath=ed.view==='edit'?ed.session?.path:state?.lastFile;
@@ -2016,8 +2053,10 @@
   $('share-form').addEventListener('submit',async event=>{
     event.preventDefault();const file=sharePath,title=$('share-name').value.trim();if(!file||!title)return;
     $('share-dialog').close();
-    try{await window.captureFlushEdits?.();const keep=ed.session?.path===file?ed.session.keep.map(r=>r.slice()):undefined;await run('publish',()=>bridge.publishVideo(file,title,keep));}catch(error){fail(error);render();}
+    try{await window.captureFlushEdits?.();const keep=ed.session?.path===file?ed.session.keep.map(r=>r.slice()):undefined;lastShare={file,title,keep};await run('publish',()=>bridge.publishVideo(file,title,keep));}catch(error){fail(error);render();}
   });
+  // A failed share (offline, unconfirmed email, full storage) can be tried again once fixed.
+  E.jobRetry.addEventListener('click',()=>{const a=lastShare;if(!a)return;ed.jobDismissed=null;run('publish',()=>bridge.publishVideo(a.file,a.title,a.keep));});
   $('copy-share').addEventListener('click',async()=>{try{await bridge.copyShareLink();$('copy-share').textContent='Copied';setTimeout(()=>$('copy-share').textContent='Copy link',2000);}catch(error){fail(error);render();}});
 
   /* Rendering for editor, view switch, and job */
@@ -2084,16 +2123,23 @@
       title = connecting?'Connect your VidCapture account':job.kind==='publish'?'Sharing on VidCapture':audio ? (folio ? 'Enhancing audio with Folio' : job.kind==='quick-audio' ? 'Enhancing audio with Quick studio' : 'Enhancing audio with fast cleanup') : 'Saving version';
       detail = ed.canceling ? 'Canceling' : (job.stage || 'Working');
     } else if (status === 'done') {
-      title = job.kind==='publish'?'Your share link is ready':audio ? 'Enhanced copy saved' : 'Version saved to Recordings';
+      title = job.kind==='publish'?(s.share?.copied?'Link copied':'Your share link is ready'):audio ? 'Enhanced copy saved' : 'Version saved to Recordings';
       detail = job.kind==='publish'?(s.share?.cardWarning||s.share?.url||'Ready to share'):baseName(job.output);
     } else {
       title = job.kind==='publish'?'Video was not shared':audio ? 'Audio was not enhanced' : 'Version was not saved';
       detail = job.error;
     }
     setText(E.jobTitle, title);
-    setText(E.jobDetail, detail);
+    // The pairing code is what the person types in the browser; make it easy to read.
+    if (E.jobDetail.textContent !== (detail || '')) {
+      const m = /^(.*code )([A-Z0-9]{4}-[A-Z0-9]{4})$/.exec(detail || '');
+      if (m) E.jobDetail.replaceChildren(m[1], span('job-code', m[2]));
+      else E.jobDetail.textContent = detail || '';
+    }
     E.jobDetail.title = status === 'done' ? job.output : '';
     E.jobCancel.hidden = status !== 'running';
+    E.jobRetry.hidden = !(status === 'failed' && job.kind === 'publish' && lastShare);
+    E.jobRetry.disabled = busy;
     E.jobCancel.disabled = ed.canceling || pending === 'cancel';
     setText(E.jobCancel, ed.canceling ? 'Canceling' : 'Cancel');
     E.jobOpen.hidden = status !== 'done';
@@ -2162,9 +2208,15 @@
     E.exportBtn.classList.toggle('is-busy', pending === 'export');
 
     const media = s ? s.media : null;
-    const audioReady = media && (E.enhanceMode.value === 'folio' ? media.folioReady : media.quickAudioReady);
+    // Only installed methods are offered; with none installed the controls stay out of the way.
+    const methodReady = (v) => !!media && (v === 'folio' ? media.folioReady : media.quickAudioReady);
+    const anyMethod = !!media && (media.quickAudioReady || media.folioReady);
+    for (const o of E.enhanceMode.options) o.disabled = !!media && !methodReady(o.value);
+    if (anyMethod && !methodReady(E.enhanceMode.value)) E.enhanceMode.value = Array.from(E.enhanceMode.options).find((o) => !o.disabled).value;
+    E.enhanceMode.hidden = E.enhance.hidden = !anyMethod;
+    const audioReady = methodReady(E.enhanceMode.value);
     let help = '';
-    if (media && !audioReady) help = 'Audio enhancement needs a separately configured local audio runtime. Recording and editing work without it.';
+    if (!anyMethod) help = '';
     else if (media && !media.hasAudio) help = 'This recording has no microphone audio to enhance.';
     else if (media && !media.enhanceSource) help = 'This copy has no isolated microphone track to enhance.';
     else if (media && media.enhanced) help = `Audio enhanced with ${media.enhanced === 'folio' ? 'Folio studio' : 'Quick studio'}. Enhance again to try another method.`;
@@ -2207,10 +2259,15 @@
     versionList: $('version-list'),
     versionsToggle: $('versions-toggle'),
     versionsCount: $('versions-count'),
+    rename: $('library-rename'),
+    renameInput: $('library-rename-input'),
+    renameError: $('library-rename-error'),
+    show: $('library-show'),
+    del: $('library-delete'),
   };
   const player = window.VCPlayer ? window.VCPlayer.attach($('library-player')) : null;
   // items: one entry per recording. versions: every file by name, with its recording.
-  const lib = { items: [], byRoot: new Map(), versions: new Map(), selected: null, viewing: null, loaded: false, loading: null, again: false, requested: new Set(), recentSig: null, restoring: false, versionsOpen: false };
+  const lib = { renaming: false, removing: false, items: [], byRoot: new Map(), versions: new Map(), selected: null, viewing: null, loaded: false, loading: null, again: false, requested: new Set(), recentSig: null, restoring: false, versionsOpen: false };
 
   function libraryDuration(item) {
     return Number(item.duration) > 0 ? formatShort(item.duration) : '';
@@ -2224,10 +2281,12 @@
     return d.toLocaleString('en-US', opts).replace(' at ', ', ');
   }
 
+  // When it was recorded helps find it again; size is in the header total.
   function cardSub(item) {
     if (item.unreadable) return 'Could not be read';
     const n = item.versions ? item.versions.length : 1;
-    return [n > 1 ? `${n} versions` : '', formatBytes(item.bytes)].filter(Boolean).join(', ');
+    const when = versionWhen({ modified: item.recordedAt || item.modified });
+    return [when === item.title ? '' : when, n > 1 ? `${n} versions` : ''].filter(Boolean).join(', ');
   }
 
   function libraryPoster(card, item) {
@@ -2375,7 +2434,24 @@
     if (player) player.focus();
   }
 
+  // Opens one recording in Recordings, loading the list first when needed.
+  async function reviewRecording(path) {
+    if (ed.view === 'edit') { E.video.pause(); if (ed.session) flushSave(ed.session); }
+    setView('library');
+    syncShares();
+    await loadLibrary();
+    const entry = lib.versions.get(baseName(path));
+    if (!entry) return;
+    lib.versionsOpen = false;
+    lib.selected = entry.item.root;
+    showVersion(entry.version.name);
+    L.root.scrollTo({ top: 0 });
+    render();
+  }
+
   function closeLibraryPreview() {
+    endRename(false);
+    disarmDelete();
     const root = lib.selected;
     lib.selected = null;
     lib.viewing = null;
@@ -2444,8 +2520,11 @@
     if (!item) return;
     const v = (lib.versions.get(lib.viewing) || {}).version || item;
     setText(L.title, item.title);
+    L.title.hidden = !L.renameInput.hidden;
     L.title.title = v.name;
-    const parts = [v.current === false ? v.label : '', versionWhen(v), libraryDuration(v)];
+    // An untitled recording is already named by its date; do not repeat it.
+    const when = versionWhen(v);
+    const parts = [v.current === false ? v.label : '', item.dated && v.current !== false ? '' : when, libraryDuration(v)];
     setText(L.meta, v.unreadable ? 'This recording could not be read.' : parts.filter(Boolean).join(', '));
     renderVersions(item);
   }
@@ -2475,6 +2554,10 @@
     const entry = lib.viewing && lib.versions.get(lib.viewing);
     const unreadable = !!(entry && entry.version.unreadable);
     L.edit.disabled = !entry || unreadable || recordingBusy;
+    L.rename.disabled = !entry || lib.renaming;
+    L.show.disabled = !entry;
+    L.del.disabled = !entry || recordingBusy || jobRunning || lib.removing;
+    L.del.title = recordingBusy ? 'Finish recording first' : jobRunning ? 'Wait for the current job to finish' : L.del.classList.contains('is-armed') ? '' : 'Move to Trash';
     L.edit.title = recordingBusy ? 'Finish recording first' : '';
     L.share.disabled = !entry || unreadable || recordingBusy || jobRunning || !!pending;
     L.share.title = recordingBusy ? 'Finish recording first' : jobRunning ? 'Wait for the current job to finish' : ready ? 'Upload to vidcapture.stream' : 'Log in or sign up at vidcapture.stream to share';
@@ -2521,6 +2604,7 @@
   }
 
   L.view.addEventListener('click', showLibrary);
+  $('editor-choose').addEventListener('click', showLibrary);
   $('library-record').addEventListener('click', () => setView('record'));
   L.grid.addEventListener('click', (e) => {
     const b = e.target.closest('button.lib-card');
@@ -2529,10 +2613,108 @@
   L.close.addEventListener('click', closeLibraryPreview);
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape' || ed.view !== 'library' || !lib.selected || e.defaultPrevented || document.fullscreenElement) return;
+    if (L.del.classList.contains('is-armed')) { e.preventDefault(); disarmDelete(); render(); return; }
     if (document.querySelector('dialog[open]')) return;
     e.preventDefault();
     closeLibraryPreview();
   });
+  // Rename: the title becomes a field; Enter or leaving it saves, Escape cancels.
+  function startRename() {
+    const item = lib.selected && lib.byRoot.get(lib.selected);
+    if (!item || !L.renameInput.hidden) return;
+    L.renameInput.value = item.title;
+    L.renameInput.hidden = false;
+    L.title.hidden = true;
+    L.renameInput.focus();
+    L.renameInput.select();
+  }
+  // A failed save keeps the typed name in the field with the reason, so it can be retried or canceled.
+  function closeRename() {
+    L.renameInput.hidden = true;
+    L.renameInput.disabled = false;
+    L.renameInput.removeAttribute('aria-invalid');
+    L.renameError.hidden = true;
+    L.title.hidden = false;
+    lib.renameFailed = false;
+  }
+  async function endRename(save) {
+    if (L.renameInput.hidden || lib.renaming) return;
+    const item = lib.selected && lib.byRoot.get(lib.selected);
+    const title = L.renameInput.value.replace(/\s+/g, ' ').trim();
+    if (!save || !item || !title || title === item.title) { closeRename(); render(); return; }
+    lib.renaming = true;
+    L.renameInput.disabled = true;
+    L.renameError.hidden = true;
+    try {
+      setLibraryItems(await bridge.renameRecording(item.root, title));
+      buildLibraryGrid();
+      lib.renaming = false;
+      closeRename();
+      render();
+      L.rename.focus();
+    } catch (err) {
+      lib.renaming = false;
+      lib.renameFailed = true;
+      L.renameInput.disabled = false;
+      L.renameInput.setAttribute('aria-invalid', 'true');
+      L.renameError.textContent = `${errorMessage(err)} Press Enter to try again or Escape to cancel.`;
+      L.renameError.hidden = false;
+      L.renameInput.focus();
+    }
+  }
+  L.rename.addEventListener('click', startRename);
+  L.title.addEventListener('dblclick', startRename);
+  L.renameInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); endRename(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); endRename(false); L.rename.focus(); }
+  });
+  L.renameInput.addEventListener('blur', () => { if (!lib.renameFailed) endRename(true); });
+
+  L.show.addEventListener('click', async () => {
+    const entry = lib.viewing && lib.versions.get(lib.viewing);
+    if (entry) try { await bridge.showRecording(entry.version.name); } catch (err) { fail(err); render(); }
+  });
+
+  // Delete asks once more in place, like Delete take: the first click arms it.
+  let delTimer = null;
+  function disarmDelete() {
+    clearTimeout(delTimer);
+    if (!L.del.classList.contains('is-armed')) return;
+    L.del.classList.remove('is-armed');
+    setText(L.del.querySelector('.label'), '');
+    L.del.setAttribute('aria-label', 'Move to Trash');
+  }
+  L.del.addEventListener('click', async () => {
+    const item = lib.selected && lib.byRoot.get(lib.selected);
+    if (!item) return;
+    if (!L.del.classList.contains('is-armed')) {
+      L.del.classList.add('is-armed');
+      setText(L.del.querySelector('.label'), 'Move to Trash');
+      L.del.setAttribute('aria-label', `Confirm: move ${item.title} to Trash`);
+      L.del.title = '';
+      delTimer = setTimeout(() => { disarmDelete(); render(); }, 5000);
+      return;
+    }
+    disarmDelete();
+    const base = (n) => baseName(n).replace(/\.(mp4|mkv)$/i, '').replace(/(?:-(?:edited|enhanced|quick-studio|folio)-\d{10,})+$/, '');
+    // An open editor on this recording lets go of it first.
+    if (ed.session && base(ed.session.path) === base(item.root)) {
+      clearTimeout(ed.session.saveTimer);
+      ed.session = null; E.video.pause(); E.video.removeAttribute('src'); E.video.load();
+    }
+    if (player) player.clear();
+    lib.removing = true;
+    render();
+    try {
+      setLibraryItems(await bridge.removeRecording(item.root));
+      lib.selected = null; lib.viewing = null;
+      buildLibraryGrid();
+    } catch (err) { fail(err); }
+    finally { lib.removing = false; render(); }
+    if (!lib.selected) (L.grid.querySelector('button.lib-card') || L.view).focus();
+  });
+  L.del.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== L.del) { disarmDelete(); render(); } }, 0));
+
   L.versionsToggle.addEventListener('click', () => { lib.versionsOpen = !lib.versionsOpen; render(); });
   L.versionList.addEventListener('click', (e) => {
     const r = e.target.closest('button[data-restore]');

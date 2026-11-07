@@ -17,6 +17,10 @@ npx wrangler r2 bucket create my-vidcapture-videos
 
 Edit wrangler.jsonc: set database_id to the new database's ID. Give the Worker and bucket your own unique names if necessary, and make the bindings match. Set SITE_ORIGIN to your Worker's HTTPS URL, with no trailing slash. Use your own workers.dev subdomain or configured custom domain. The example contains no production resource IDs.
 
+Sign-up, sign-in links, and password resets are protected by [Cloudflare Turnstile](https://developers.cloudflare.com/turnstile/). Create a widget for your hostname, put its site key in TURNSTILE_SITEKEY and the hostname in TURNSTILE_HOSTNAMES, and add the secret with `npx wrangler secret put TURNSTILE_SECRET`. Without them, those forms answer that they are unavailable; pairing and sharing still work.
+
+Reports of videos and a Monday summary can be emailed to you. Add a second send_email binding named NOTIFY whose destination_address is your own verified address, set NOTIFY_TO to that address, and set NOTIFY_FROM to a sender on your email domain (for example reports@YOUR-EMAIL-DOMAIN, which the binding must allow). Without NOTIFY and NOTIFY_TO, nothing is sent and reports still appear on /admin.
+
 Account email (confirming addresses, password resets, and sign-in links) uses [Cloudflare Email Sending](https://developers.cloudflare.com/email-routing/email-workers/send-email-workers/). Set EMAIL_FROM and the send_email sender to an address on a domain you have set up for it. Pairing below does not need email, so you can skip this until you want accounts.
 
 To send through Amazon SES instead, verify your sending domain in SES and add the Worker secrets SES_ACCESS_KEY_ID and SES_SECRET_ACCESS_KEY (`npx wrangler secret put SES_ACCESS_KEY_ID`), plus SES_REGION if it is not us-east-1. Use an IAM key limited to sending email. When those secrets are set, the Worker uses SES; otherwise it uses the send_email binding.

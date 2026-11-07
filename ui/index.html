@@ -37,6 +37,7 @@
     <symbol id="i-volume" viewBox="0 0 24 24"><path d="M15 8a5 5 0 0 1 0 8"/><path d="M17.7 5a9 9 0 0 1 0 14"/><path d="M6 15h-2a1 1 0 0 1 -1 -1v-4a1 1 0 0 1 1 -1h2l3.5 -4.5a.8 .8 0 0 1 1.5 .5v14a.8 .8 0 0 1 -1.5 .5l-3.5 -4.5"/></symbol>
     <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M12 6a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M4 6h8"/><path d="M16 6h4"/><path d="M6 12a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M4 12h2"/><path d="M10 12h10"/><path d="M15 18a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M4 18h11"/><path d="M19 18h1"/></symbol>
     <symbol id="i-restart" viewBox="0 0 24 24"><path d="M19.95 11a8 8 0 1 0 -.5 4m.5 5v-5h-5"/></symbol>
+    <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4"/><path d="M13.5 6.5l4 4"/></symbol>
     <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7l16 0"/><path d="M10 11l0 6"/><path d="M14 11l0 6"/><path d="M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2l1 -12"/><path d="M9 7v-3a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v3"/></symbol>
     <symbol id="i-pointer" viewBox="0 0 24 24"><path d="M7.904 17.563a1.2 1.2 0 0 0 2.228 .308l2.09 -3.093l4.907 4.907a1.067 1.067 0 0 0 1.509 0l1.047 -1.047a1.067 1.067 0 0 0 0 -1.509l-4.907 -4.907l3.113 -2.09a1.2 1.2 0 0 0 -.309 -2.228l-13.582 -3.904l3.904 13.563z"/></symbol>
   </svg>
@@ -276,12 +277,17 @@
       <div class="library-detail">
         <div class="library-detail-text">
           <h3 id="library-title"></h3>
+          <input id="library-rename-input" class="rename-input" maxlength="120" autocomplete="off" spellcheck="false" aria-label="Recording name" aria-describedby="library-rename-error" hidden>
+          <p id="library-rename-error" class="rename-error" role="alert" hidden></p>
           <div class="meta-row">
             <p class="library-meta" id="library-meta"></p>
             <button type="button" class="versions-toggle" id="versions-toggle" aria-expanded="false" aria-controls="library-versions" hidden><span id="versions-count"></span><svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></button>
           </div>
         </div>
         <div class="library-actions">
+          <button type="button" class="icon-btn" id="library-rename" aria-label="Rename" title="Rename"><svg class="icon" aria-hidden="true"><use href="#i-pencil"/></svg></button>
+          <button type="button" class="icon-btn" id="library-show" aria-label="Show in folder" title="Show in folder"><svg class="icon" aria-hidden="true"><use href="#i-folder"/></svg></button>
+          <button type="button" class="btn btn-plain" id="library-delete" aria-label="Move to Trash" title="Move to Trash"><svg class="icon" aria-hidden="true"><use href="#i-trash"/></svg><span class="label"></span></button>
           <button type="button" class="btn btn-quiet" id="library-edit"><svg class="icon" aria-hidden="true"><use href="#i-cut"/></svg><span>Edit</span></button>
           <button type="button" class="btn btn-solid" id="library-copy-link" hidden><svg class="icon" aria-hidden="true"><use href="#i-link"/></svg><span>Copy link</span></button>
           <button type="button" class="btn btn-quiet" id="library-open-link" hidden>Open link</button>
@@ -303,7 +309,7 @@
   </section>
 
   <section class="editor" id="editor" aria-label="Edit recording">
-    <p class="editor-empty" id="editor-empty">Choose Edit on a recording to open it here.</p>
+    <div class="editor-empty" id="editor-empty"><p>No recording open.</p><button type="button" class="btn btn-quiet" id="editor-choose">Choose a recording</button></div>
     <div class="editor-main" id="editor-main" hidden>
       <div class="editor-head">
         <h2 class="edit-name" id="edit-name"></h2>
@@ -323,8 +329,8 @@
         </select>
         <span class="edit-summary" id="edit-summary"></span>
       </div>
-      <div class="waveform-tools"><span id="waveform-status" role="status">Audio waveform</span><div><button type="button" class="btn btn-quiet" id="zoom-out" aria-label="Zoom out">−</button><span id="zoom-level">1×</span><button type="button" class="btn btn-quiet" id="zoom-in" aria-label="Zoom in">+</button></div></div>
-      <div class="timeline-viewport" id="timeline-viewport" title="Super/Command + scroll to zoom">
+      <div class="waveform-tools"><span id="waveform-status" role="status">Audio waveform</span><div><button type="button" class="btn btn-quiet" id="zoom-out" aria-label="Zoom out" title="Zoom out (Ctrl + scroll)">−</button><span id="zoom-level">1×</span><button type="button" class="btn btn-quiet" id="zoom-in" aria-label="Zoom in" title="Zoom in (Ctrl + scroll)">+</button></div></div>
+      <div class="timeline-viewport" id="timeline-viewport" title="Ctrl + scroll to zoom">
       <div class="timeline" id="timeline" tabindex="0" role="slider" aria-label="Playback position" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0">
         <div class="track" id="track">
           <canvas id="waveform" aria-label="Recording audio waveform"></canvas>
@@ -344,7 +350,7 @@
           <label class="time-field"><span>End</span><input type="text" id="sel-end" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="0:00.0"></label>
         </div>
         <div class="tool-group">
-          <button type="button" class="btn btn-quiet" id="cut" title="Cut selection (Super/Command+B or Delete)"><svg class="icon" aria-hidden="true"><use href="#i-cut"/></svg><span>Cut</span></button>
+          <button type="button" class="btn btn-quiet" id="cut" title="Cut selection (Ctrl+B or Delete)"><svg class="icon" aria-hidden="true"><use href="#i-cut"/></svg><span>Cut</span></button>
           <button type="button" class="btn btn-quiet" id="trim" title="Keep only the selection">Trim to selection</button>
         </div>
         <div class="tool-group history">
@@ -379,6 +385,7 @@
     </div>
     <div class="job-actions">
       <button type="button" class="btn btn-quiet" id="job-cancel">Cancel</button>
+      <button type="button" class="btn btn-quiet" id="job-retry" hidden>Try again</button>
       <button type="button" class="btn btn-quiet" id="job-open">Open result</button>
       <button type="button" class="btn btn-quiet" id="job-edit">Edit result</button>
       <button type="button" class="icon-btn" id="job-dismiss" aria-label="Dismiss" title="Dismiss"><svg class="icon"><use href="#i-x"/></svg></button>

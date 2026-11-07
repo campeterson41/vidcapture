@@ -11,13 +11,21 @@ const ORIGIN='https://vidcapture.stream';
 // so parts can travel concurrently and finish in any order.
 const CONCURRENCY=5,PART_ATTEMPTS=4;
 function wait(ms,signal){return new Promise((resolve,reject)=>{if(signal.aborted)return reject(signal.reason);const stop=()=>{clearTimeout(timer);reject(signal.reason);};const timer=setTimeout(()=>{signal.removeEventListener('abort',stop);resolve();},ms);signal.addEventListener('abort',stop,{once:true});});}
+// A request that never got an answer says what to do instead of "fetch failed".
+// Cancels pass through unchanged so a paused upload still reads as paused.
+function networkError(error,origin){
+ const host=new URL(origin).host;
+ if(error?.name==='TimeoutError')return new Error(`${host} is not responding. Try again shortly.`);
+ if(error?.name==='TypeError')return new Error(`Could not reach ${host}. Check your internet connection and try again.`);
+ return error;
+}
 class Publisher {
  constructor(recorder,media,options={}){this.rec=recorder;this.media=media;this.fixedOrigin=options.origin;this.origin=options.origin||ORIGIN;this.fetch=options.fetch||fetch;this.openExternal=options.openExternal;this.transcript=options.transcript||null;this.log=options.log||((...a)=>console.error(...a));this.pairInterval=options.pairInterval??2000;this.concurrency=Math.max(1,Math.min(16,Math.floor(options.concurrency||CONCURRENCY)));this.retryDelay=options.retryDelay??500;this.controller=null;this.configFile=path.join(recorder.dataDir,'publishing.json');this.checkpoints=path.join(recorder.dataDir,'uploads');}
  async init(){try{const c=await this.config();this.origin=c.origin;this.rec.state.publishingReady=true;}catch{this.rec.state.publishingReady=false;}}
  async config(){const c=JSON.parse(await fs.readFile(this.configFile,'utf8'));let origin;try{origin=new URL(c.origin);}catch{throw new Error('Publishing is not connected on this computer.');}if(!/^[a-f0-9]{64}$/.test(c.token)||origin.origin!==c.origin||origin.protocol!=='https:'||origin.username||origin.password||(this.fixedOrigin&&c.origin!==this.fixedOrigin))throw new Error('Publishing is not connected on this computer.');return c;}
  async request(route,options={}){
   const config=await this.config();if(config.origin!==this.origin)throw new Error('Sharing configuration changed. Restart VidCapture to reconnect.');const {signal,...rest}=options;signal?.throwIfAborted();this.controller?.signal.throwIfAborted();
-  const response=await this.fetch(this.origin+route,{...rest,redirect:'error',headers:{Authorization:`Bearer ${config.token}`,...options.headers},signal:AbortSignal.any([...(this.controller?[this.controller.signal]:[]),...(signal?[signal]:[]),AbortSignal.timeout(options.method==='PUT'?600000:120000)])});
+  let response;try{response=await this.fetch(this.origin+route,{...rest,redirect:'error',headers:{Authorization:`Bearer ${config.token}`,...options.headers},signal:AbortSignal.any([...(this.controller?[this.controller.signal]:[]),...(signal?[signal]:[]),AbortSignal.timeout(options.method==='PUT'?600000:120000)])});}catch(error){throw networkError(error,this.origin);}
   const bytes=await response.body?.getReader();let text='',size=0;const decoder=new TextDecoder();if(bytes){while(true){const {done,value}=await bytes.read();if(done)break;size+=value.byteLength;if(size>2*1024*1024){await bytes.cancel();throw new Error('Invalid publishing response.');}text+=decoder.decode(value,{stream:true});}}
   text+=decoder.decode();let data;try{data=JSON.parse(text);}catch{throw new Error(`Publishing service returned ${response.status}. Try again shortly.`);}
   if(!response.ok)throw Object.assign(new Error(data.error||'Upload failed.'),{status:response.status});return data;
@@ -28,7 +36,7 @@ class Publisher {
   if(!this.openExternal)throw new Error('Publishing is not connected on this computer.');
   const token=crypto.randomBytes(32).toString('hex'),hash=crypto.createHash('sha256').update(token).digest('hex'),host=new URL(this.origin).host;
   const post=async(route,body,auth)=>{
-   const response=await this.fetch(this.origin+route,{method:'POST',redirect:'error',headers:{'Content-Type':'application/json',...(auth?{Authorization:`Bearer ${token}`}:{})},body:JSON.stringify(body||{}),signal:AbortSignal.any([signal,AbortSignal.timeout(30000)])});
+   let response;try{response=await this.fetch(this.origin+route,{method:'POST',redirect:'error',headers:{'Content-Type':'application/json',...(auth?{Authorization:`Bearer ${token}`}:{})},body:JSON.stringify(body||{}),signal:AbortSignal.any([signal,AbortSignal.timeout(30000)])});}catch(error){throw networkError(error,this.origin);}
    let data={};try{data=await response.json();}catch{}
    if(!response.ok)throw Object.assign(new Error(data.error||`${host} returned ${response.status}. Try again shortly.`),{status:response.status});return data;
   };
@@ -211,4 +219,4 @@ class Publisher {
   });
  }
 }
-module.exports={Publisher,ORIGIN};
+module.exports={Publisher,ORIGIN,networkError};

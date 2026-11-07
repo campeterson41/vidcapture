@@ -23,10 +23,11 @@ test('window hit-testing uses visible workspaces, skips VidCapture, and prefers 
   const floating=client({address:'0x2',at:[100,100],size:[500,400],floating:true,focusHistoryID:3});
   const hidden=client({address:'0x3',workspace:{id:9},at:[0,0],size:[1280,720],focusHistoryID:0});
   const own=client({address:'0x4',class:'capture',at:[0,0],size:[1280,720],floating:true,focusHistoryID:0});
+  const ownRenamed=client({address:'0x8',class:'vidcapture',at:[0,0],size:[1280,720],floating:true,focusHistoryID:0});
   const camera=client({address:'0x5',class:'capture-camera',at:[200,200],size:[100,100],pinned:true});
   const pinnedElsewhere=client({address:'0x6',workspace:{id:7},pinned:true,at:[1300,40],size:[300,300]});
   const external=client({address:'0x7',workspace:{id:2},at:[1280,26],size:[1720,1414]});
-  const windows=G.visibleWindows([tiled,floating,hidden,own,camera,pinnedElsewhere,external],monitors);
+  const windows=G.visibleWindows([tiled,floating,hidden,own,ownRenamed,camera,pinnedElsewhere,external],monitors);
   assert.deepEqual(windows.map(w=>w.address).sort(),['0x1','0x2','0x6','0x7']);
   assert.equal(G.windowAt(windows,150,150).address,'0x2');
   assert.equal(G.windowAt(windows,900,400).address,'0x1');

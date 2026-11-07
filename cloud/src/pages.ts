@@ -85,19 +85,21 @@ function waveform(count: number, seed: number, cuts: [number, number][] = []) {
 
 
 
-export function homePage(signedIn: boolean) {
-	const second = signedIn ? '<a class="button secondary" href="/library">My library</a>' : '<a class="button secondary" href="/login#signup">Create a free account</a>';
+// demo: the demo section, or an empty string when no demo video is set.
+export function homePage(signedIn: boolean, demo = '') {
+	const second = signedIn ? '<a class="button secondary" href="/library">My videos</a>' : '<a class="button secondary" href="/login#signup">Create a free account</a>';
 	return `<main class="home">
 <section class="hero">
 	<div class="hero-copy">
 		<h1>Record a polished video from your top bar.</h1>
 		<p class="lede">VidCapture is a screen and camera recorder for Omarchy. It cleans up your microphone while you talk, lets you edit by deleting words from the transcript, and shares the version you choose with one link.</p>
-		<div class="hero-actions"><a class="button" href="#install">Install on Omarchy</a>${second}</div>
-		<p class="hero-note">Free and open source. Everything stays on your computer until you press Share.</p>
+		<div class="hero-actions"><a class="button" href="#install">Install on Omarchy</a>${demo ? '<a class="button secondary" href="#demo">Watch the demo</a>' : second}</div>
+		<p class="hero-note">Free and open source. Your recordings stay on your computer until you choose to share them.</p>
 	</div>
 	<div class="hero-visual">${heroDesk()}</div>
 </section>
 
+${demo}
 <section class="facts" aria-label="At a glance">
 	<div><strong>Local first</strong><p>Recording, cleanup, transcripts, and edits all run on your computer.</p></div>
 	<div><strong>Original quality</strong><p>The file you save is the file people watch. It is never re-encoded.</p></div>
@@ -150,7 +152,7 @@ export function homePage(signedIn: boolean) {
 				<li>Save version renders a new MP4. Your original recording is never changed</li>
 			</ul>
 		</div>
-		<div class="feature-visual"><img class="shot" src="/shots/editor.webp" width="1200" height="780" alt="The VidCapture editor with a recording open, its transcript with cut words crossed out, and a waveform timeline with one section cut" loading="lazy" decoding="async"></div>
+		<div class="feature-visual"><img class="shot" src="/shots/editor.webp" width="820" height="650" alt="The VidCapture editor with a recording open, its transcript with cut filler words crossed out and a phrase selected, and a waveform timeline with two cuts" loading="lazy" decoding="async"></div>
 	</article>
 
 	<article class="feature">
@@ -163,7 +165,7 @@ export function homePage(signedIn: boolean) {
 				<li>Files are plain MP4s in <code>~/Videos/Capture</code>, ready for any other tool</li>
 			</ul>
 		</div>
-		<div class="feature-visual"><img class="shot" src="/shots/library-grid.webp" width="1000" height="410" alt="The VidCapture library with recordings shown as thumbnails with their lengths and sizes" loading="lazy" decoding="async"></div>
+		<div class="feature-visual"><img class="shot" src="/shots/library-grid.webp" width="1000" height="300" alt="The VidCapture library with recordings shown as thumbnails with their lengths, titles, and dates" loading="lazy" decoding="async"></div>
 	</article>
 
 	<article class="feature">
@@ -179,14 +181,14 @@ export function homePage(signedIn: boolean) {
 				<li>A Chrome extension shows VidCapture links as animated previews in Gmail and starts a recording from the toolbar</li>
 			</ul>
 		</div>
-		<div class="feature-visual"><img class="shot" src="/shots/watch-comments.webp" width="1000" height="1073" alt="A shared video playing on its watch page, with timestamped comments below" loading="lazy" decoding="async"></div>
+		<div class="feature-visual"><img class="shot" src="/shots/watch-comments.webp" width="1000" height="1270" alt="A shared video playing on its watch page, with timestamped comments below" loading="lazy" decoding="async"></div>
 	</article>
 </section>
 
 <section class="how" id="privacy">
 	<div class="section-head">
 		<h2>Your computer does the work</h2>
-		<p>The website does one job: deliver the videos you choose to share. Everything else happens on your machine.</p>
+		<p>The website does one job: deliver the videos you choose to share. Recording, editing, and transcription happen on your machine.</p>
 	</div>
 	<div class="split">
 		<div class="split-col local">
@@ -202,9 +204,9 @@ export function homePage(signedIn: boolean) {
 			<h3>Goes to vidcapture.stream</h3>
 			<ul>
 				<li>Only the videos you press Share on</li>
-				<li>Their preview images and titles</li>
-				<li>Play counts and viewer comments</li>
-				<li>Nothing else, and nothing in the background</li>
+				<li>Their preview images, titles, and captions</li>
+				<li>Play counts, viewer comments, and reactions</li>
+				<li>Uploads start when you choose Share</li>
 			</ul>
 		</div>
 	</div>
@@ -219,7 +221,7 @@ export function homePage(signedIn: boolean) {
 		</div>
 		<div>
 			<h3>Optional writing help</h3>
-			<p>If the Claude Code command line tool is installed and signed in, VidCapture uses it to punctuate transcripts and write titles. It sends transcript text only, never audio or video, through your own account. Set <code>CAPTURE_POLISH=off</code> to turn it off.</p>
+			<p>VidCapture can use the Claude Code command line tool, if it is installed and signed in, through your own account. Punctuating a transcript sends its text. Suggesting a title sends up to about 700 words of the transcript, the recording's length, and the name of the window or app on screen. Audio and video files are never sent. Set <code>CAPTURE_POLISH=off</code> to skip punctuation and <code>CAPTURE_TITLES=off</code> to skip automatic titles.</p>
 		</div>
 	</div>
 </section>
@@ -278,7 +280,7 @@ cd vidcapture
 		<details><summary>Do the people I send a link to need an account?</summary><p>No. Anyone with the link to a public video can watch and comment in their browser. Private videos only play for you.</p></details>
 		<details><summary>Can viewers leave comments?</summary><p>Yes. Anyone who can watch a video can comment or react without an account, pinned to the moment they were watching. You get an email when someone comments, and you can delete any comment or turn comments off for a video.</p></details>
 		<details><summary>Does VidCapture upload my recordings automatically?</summary><p>Never. A video only leaves your computer when you press Share, and only the version you chose is sent.</p></details>
-		<details><summary>Does transcription send my audio anywhere?</summary><p>No. Transcripts are made on your computer with NVIDIA Parakeet, running on the CPU. If Claude Code is installed, transcript text (never audio) is used for punctuation and titles; you can turn that off.</p></details>
+		<details><summary>Does transcription send my audio anywhere?</summary><p>No. Transcripts are made on your computer with NVIDIA Parakeet, running on the CPU. If Claude Code is installed, transcript text is sent through your own account for punctuation, and for titles along with the recording's length and the name of the window or app on screen. Audio and video are never sent, and each can be turned off.</p></details>
 		<details><summary>Do I need an NVIDIA GPU?</summary><p>Only for background blur and background images. Recording, noise removal, transcripts, and editing work without one.</p></details>
 		<details><summary>Can someone find my videos without the link?</summary><p>No. Videos are not listed or searchable, and their links cannot be guessed. Anyone who has the link to a public video can watch and download it, so share it with people you trust.</p></details>
 		<details><summary>What happens when I remove a video?</summary><p>Its link stops working immediately and the stored file is deleted. The recording on your computer is not affected. Copies that viewers already downloaded cannot be recalled.</p></details>
@@ -335,12 +337,14 @@ function authPanel(heading: string) {
 			<label for="login-password">Password</label><input id="login-password" type="password" autocomplete="current-password" required>
 			<button class="button" type="submit">Log in</button>
 			<p class="auth-links"><a href="/forgot">Forgot password?</a> <span class="dot">·</span> <button type="button" class="text-button" id="email-link">Email me a sign-in link</button></p>
+			<div class="turnstile-slot" data-turnstile="signin"></div>
 			<p class="login-status" role="status" aria-live="polite"></p>
 		</form>
 		<form id="panel-signup" class="auth-form" role="tabpanel" aria-labelledby="tab-signup" hidden novalidate>
 			<label for="signup-email">Email</label><input id="signup-email" type="email" autocomplete="email" required>
 			<label for="signup-password">Password</label><input id="signup-password" type="password" autocomplete="new-password" minlength="10" required aria-describedby="signup-hint">
 			<p id="signup-hint" class="field-hint">At least 10 characters.</p>
+			<div class="turnstile-slot" data-turnstile="signup"></div>
 			<button class="button" type="submit">Create free account</button>
 			<p class="field-hint">By creating an account you agree to the <a href="/terms">Terms</a> and <a href="/privacy">Privacy policy</a>.</p>
 			<p class="login-status" role="status" aria-live="polite"></p>
@@ -356,7 +360,7 @@ export const accountPages: Record<string, Page> = {
 		<form id="connect-approve" class="auth-form" hidden novalidate><h1>Connect this computer?</h1><p class="login-lede">VidCapture on <strong id="pair-name"></strong> will share videos to <strong id="pair-account"></strong>.</p><label for="pair-code">Type the code VidCapture shows</label><input id="pair-code" class="pair-code" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="9" placeholder="XXXX-XXXX" required><p class="field-hint">Only connect a computer you are using right now. If someone sent you this link, close this page.</p><div class="actions"><button class="button" id="pair-approve" type="submit">Connect</button><a class="button-link" href="/library">Not now</a></div></form>
 		<div id="connect-done" hidden><h1>VidCapture is connected.</h1><p class="login-lede">Go back to the app. Your upload continues on its own.</p><a class="text-link" href="/library">Open my library</a></div>
 		<p id="connect-status" class="login-status" role="status" aria-live="polite"></p></section></main>` },
-	'/forgot': { title: 'Reset password', nav: 'viewer', bodyClass: 'page-login', body: card(`<h1>Reset your password</h1><p class="login-lede">Enter your account email and we will send you a link to choose a new password.</p><form id="forgot-form" class="auth-form" novalidate><label for="forgot-email">Email</label><input id="forgot-email" type="email" autocomplete="email" required><button class="button" type="submit">Send reset link</button><p class="login-status" role="status" aria-live="polite"></p></form><p class="auth-links"><a href="/login">Back to log in</a></p>`) },
+	'/forgot': { title: 'Reset password', nav: 'viewer', bodyClass: 'page-login', body: card(`<h1>Reset your password</h1><p class="login-lede">Enter your account email and we will send you a link to choose a new password.</p><form id="forgot-form" class="auth-form" novalidate><label for="forgot-email">Email</label><input id="forgot-email" type="email" autocomplete="email" required><div class="turnstile-slot" data-turnstile="forgot"></div><button class="button" type="submit">Send reset link</button><p class="login-status" role="status" aria-live="polite"></p></form><p class="auth-links"><a href="/login">Back to log in</a></p>`) },
 	'/reset': { title: 'Choose a new password', nav: 'viewer', bodyClass: 'page-login', body: card(`<h1>Choose a new password</h1><form id="reset-form" class="auth-form" novalidate><label for="reset-password">New password</label><input id="reset-password" type="password" autocomplete="new-password" minlength="10" required><p class="field-hint">At least 10 characters.</p><button class="button" type="submit">Save password</button><p class="login-status" role="status" aria-live="polite"></p></form>`) },
 	'/verify': { title: 'Confirm email', nav: 'viewer', bodyClass: 'page-login', body: card(`<h1 id="verify-heading">Confirming your email…</h1><p id="verify-status" class="login-lede" role="status"></p><a class="button" href="/library" id="verify-continue" hidden>Open my library</a>`) },
 	'/account': { title: 'Account', nav: 'app', signedIn: true, body: `<main class="library account-page"><div class="page-heading"><div><h1>Account</h1><p class="subtle" id="account-email"></p></div><div class="actions"><button id="logout" class="quiet" type="button">Log out</button></div></div>
@@ -364,7 +368,7 @@ export const accountPages: Record<string, Page> = {
 		<section class="account-section" id="account-verify" hidden><h2>Confirm your email</h2><p>Confirm your address to start sharing. Check your inbox for our email.</p><button class="quiet" id="verify-resend" type="button">Send it again</button></section>
 		<section class="account-section"><h2>Email</h2><label class="switch"><input type="checkbox" id="notify-comments"><span>Email me when someone comments on my videos</span></label><p class="login-status" id="notify-status" role="status"></p></section>
 		<section class="account-section"><h2>Connected computers</h2><ul id="account-devices" class="device-list"></ul><p class="subtle">To connect another computer, press Share in VidCapture on it.</p></section>
-		<section class="account-section"><h2>Password</h2><form id="password-form" class="auth-form inline" novalidate><label for="current-password">Current password</label><input id="current-password" type="password" autocomplete="current-password"><label for="new-password">New password</label><input id="new-password" type="password" autocomplete="new-password" minlength="10" required><button class="quiet" type="submit">Change password</button><p class="login-status" role="status"></p></form></section>
+		<section class="account-section"><h2 id="password-heading">Password</h2><form id="password-form" class="auth-form inline" novalidate><label for="current-password">Current password</label><input id="current-password" type="password" autocomplete="current-password"><label for="new-password">New password</label><input id="new-password" type="password" autocomplete="new-password" minlength="10" required><button class="quiet" type="submit">Change password</button><p class="login-status" role="status"></p></form></section>
 		<section class="account-section"><h2>Delete account</h2><p>Removes every video you have shared and their links. Recordings on your computer are not affected.</p><form id="delete-form" class="auth-form inline" novalidate><label for="delete-password">Password</label><input id="delete-password" type="password" autocomplete="current-password"><button class="quiet danger" type="submit">Delete my account</button><p class="login-status" role="status"></p></form></section>
 		<p id="admin-link" hidden><a class="text-link" href="/admin">Moderation</a></p></main>` },
 	'/admin': { title: 'Moderation', nav: 'app', signedIn: true, admin: true, body: `<main class="library admin-page"><div class="page-heading"><div><h1>Moderation</h1></div></div><section class="account-section"><h2>Open reports</h2><div id="admin-reports"><p class="subtle">Loading…</p></div></section><section class="account-section"><h2>Accounts</h2><div class="table-wrap"><table id="admin-accounts"><thead><tr><th>Email</th><th>Joined</th><th>Videos</th><th>Storage</th><th></th></tr></thead><tbody></tbody></table></div></section></main>` },
@@ -377,9 +381,10 @@ export const accountPages: Record<string, Page> = {
 		<h2>Reports</h2><p>Anyone can report a video with the Report video link under it. Copyright holders can report infringement the same way.</p>
 		<h2>The service</h2><p>VidCapture is an early release provided as is, without warranties. Keep your own copies; recordings stay on your computer unless you delete them. We may change or end the service, and you can delete your account at any time from the Account page.</p></main>` },
 	'/privacy': { title: 'Privacy', nav: 'viewer', body: `<main class="legal"><h1>Privacy policy</h1><p class="subtle">Last updated November 7, 2026</p>
-		<h2>What we store</h2><p>Your email address, a salted hash of your password, the videos and preview images you upload, their titles and play counts, the names of the computers you connect, and comments with the name each commenter enters. Recordings you do not share never leave your computer.</p>
+		<h2>What we store</h2><p>Your email address, a salted hash of your password, the videos and preview images you upload, their titles, captions, and play counts, the names of the computers you connect, comments with the name each commenter enters, and viewer reactions. Recordings you do not share never leave your computer.</p>
 		<h2>Emails</h2><p>We email you only about your account: confirming your address, password resets, sign-in links you request, and new comments on your videos (at most one email per video every 15 minutes, and you can turn these off on your Account page). No newsletters or marketing.</p>
 		<h2>Viewers</h2><p>To count plays without counting the same person twice, we store a one-way fingerprint of the video and the viewer's network address for six hours. We do not use advertising or third-party analytics.</p>
+		<h2>The desktop app</h2><p>Recording, editing, and transcription happen on your computer. VidCapture can use the Claude Code command line tool, if it is installed and signed in, through your own account. Punctuating a transcript sends its text. Suggesting a title sends up to about 700 words of the transcript, the recording's length, and the name of the window or app on screen. Audio and video files are never sent. Set CAPTURE_POLISH=off to skip punctuation and CAPTURE_TITLES=off to skip automatic titles.</p>
 		<h2>Where it lives</h2><p>Data is stored with Cloudflare (R2 storage, D1 database, Workers).</p>
 		<h2>Your choices</h2><p>Make any video private or remove it from your library. Delete your account from the Account page to remove all of your uploaded videos and your email address.</p></main>` },
 };

@@ -1,4 +1,5 @@
-import {HttpError,json,random,digest,now,escapeHtml,cookieToken,sameOrigin,readJson,formatBytes} from './util';
+import {reportFiled} from './notify';
+import {HttpError,json,random,digest,now,escapeHtml,cookieToken,sameOrigin,readJson,formatBytes,optional} from './util';
 import {sendMail} from './mail';
 
 export type Account = { id:string; email:string; password_hash:string|null; created_at:number; verified_at:number|null; quota_bytes:number; is_admin:number; disabled:number; notify_comments:number };
@@ -9,7 +10,7 @@ const SESSION_TTL = 30 * 86400;
 const TOKEN_TTL = { verify: 7 * 86400, reset: 3600, signin: 15 * 60 } as const;
 const PBKDF2_ITERATIONS = 100000; // Workers' WebCrypto maximum for PBKDF2.
 // Self-hosted deployments set EMAIL_FROM to an address on their own Email Sending domain.
-export const sender = (env: Env) => ({ email: (env as { EMAIL_FROM?: string }).EMAIL_FROM || 'no-reply@vidcapture.stream', name: 'VidCapture' });
+export const sender = (env: Env) => ({ email: optional(env).EMAIL_FROM || 'no-reply@vidcapture.stream', name: 'VidCapture' });
 
 // ---------- Passwords ----------
 const b64 = (bytes:Uint8Array)=>btoa(String.fromCharCode(...bytes));
@@ -39,6 +40,24 @@ export async function limit(env:Env,name:string,subject:string,max:number,window
 }
 async function attempts(env:Env,name:string,subject:string,windowSeconds:number){return (await env.DB.prepare('SELECT COUNT(*) AS n FROM rate_events WHERE key=? AND at>?').bind(`${name}:${await digest(subject)}`,now()-windowSeconds).first<{n:number}>())?.n||0;}
 export const ip=(request:Request)=>request.headers.get('cf-connecting-ip')||'unknown';
+
+// ---------- Turnstile ----------
+// Sign-up and account email need a fresh Turnstile token. It is checked with Cloudflare for
+// success, the form's own action and an approved hostname, and fails closed on any error.
+async function human(request:Request,env:Env,token:unknown,action:'signup'|'signin'|'forgot'){
+ const hostnames=new Set((env.TURNSTILE_HOSTNAMES||'').split(',').map(h=>h.trim()).filter(Boolean));
+ const secret=optional(env).TURNSTILE_SECRET;
+ if(!secret||!hostnames.size)throw new HttpError(503,'This is unavailable for a moment. Try again shortly.');
+ if(typeof token!=='string'||!token||token.length>2048)throw new HttpError(403,'Complete the security check, then try again.');
+ let result:{success?:boolean;action?:string;hostname?:string;metadata?:{result_with_testing_key?:boolean}};
+ try{
+  const response=await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify',{method:'POST',signal:AbortSignal.timeout(10000),body:new URLSearchParams({secret,response:token,remoteip:ip(request)})});
+  if(!response.ok)throw new Error(`siteverify ${response.status}`);result=await response.json();
+ }catch{throw new HttpError(403,'The security check could not be completed. Try again.');}
+ // Cloudflare's test keys carry no action. They are accepted only where local testing is switched on.
+ const testing=optional(env).TURNSTILE_ALLOW_TESTING==='1'&&result.metadata?.result_with_testing_key===true;
+ if(result.success!==true||(!testing&&result.action!==action)||!hostnames.has(result.hostname||''))throw new HttpError(403,'The security check did not pass. Try again.');
+}
 
 // ---------- Sessions ----------
 export async function sessionAccount(request:Request,env:Env){
@@ -89,6 +108,7 @@ export async function accountRoutes(request:Request,env:Env,url:URL,deps:Deps):P
  const path=url.pathname,method=request.method;
  if(path==='/api/signup'&&method==='POST'){
   sameOrigin(request);const body=await readJson(request),email=validEmail(body.email),password=validPassword(body.password);
+  await human(request,env,body.turnstile,'signup');
   await limit(env,'signup-ip',ip(request),5,3600,'Too many new accounts from this network. Try again later.');
   await limit(env,'signup-all','all',300,3600,'Sign-ups are paused for a moment. Try again shortly.');
   if(await env.DB.prepare('SELECT id FROM accounts WHERE email=?').bind(email).first())throw new HttpError(409,'An account with this email already exists. Log in instead.');
@@ -124,7 +144,8 @@ export async function accountRoutes(request:Request,env:Env,url:URL,deps:Deps):P
   await emailToken(env,account,'verify');return json({ok:true});
  }
  if((path==='/api/password/forgot'||path==='/api/signin')&&method==='POST'){
-  sameOrigin(request);const email=validEmail((await readJson(request)).email);
+  sameOrigin(request);const body=await readJson(request),email=validEmail(body.email);
+  await human(request,env,body.turnstile,path==='/api/signin'?'signin':'forgot');
   await limit(env,'mail-ip',ip(request),10,3600);
   const account=await env.DB.prepare('SELECT * FROM accounts WHERE email=? AND disabled=0').bind(email).first<Account>();
   // Same answer either way, so this cannot be used to find out who has an account.
@@ -212,8 +233,10 @@ export async function accountRoutes(request:Request,env:Env,url:URL,deps:Deps):P
   sameOrigin(request);const body=await readJson(request),reasons=['Illegal or harmful','Copyright','Harassment or private information','Spam','Something else'];
   if(typeof body.reason!=='string'||!reasons.includes(body.reason))throw new HttpError(400,'Choose a reason.');
   await limit(env,'report-ip',ip(request),10,3600);
-  const v=await env.DB.prepare("SELECT id FROM videos WHERE share_id=? AND status='ready'").bind(reportMatch[1]).first<{id:string}>();if(!v)throw new HttpError(404,'Video not found.');
-  await env.DB.prepare('INSERT INTO reports(id,video_id,reason,details,created_at) VALUES(?,?,?,?,?)').bind(crypto.randomUUID(),v.id,body.reason,typeof body.details==='string'?body.details.slice(0,1000):null,now()).run();
+  const v=await env.DB.prepare("SELECT v.id,v.title,v.share_id,a.email FROM videos v LEFT JOIN accounts a ON a.id=v.account_id WHERE v.share_id=? AND v.status='ready'").bind(reportMatch[1]).first<{id:string;title:string;share_id:string;email:string|null}>();if(!v)throw new HttpError(404,'Video not found.');
+  const details=typeof body.details==='string'&&body.details.trim()?body.details.trim().slice(0,1000):null;
+  await env.DB.prepare('INSERT INTO reports(id,video_id,reason,details,created_at) VALUES(?,?,?,?,?)').bind(crypto.randomUUID(),v.id,body.reason,details,now()).run();
+  await reportFiled(env,v,body.reason,details,v.email);
   return json({ok:true});
  }
  // Admin moderation.

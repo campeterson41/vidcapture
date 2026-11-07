@@ -13,8 +13,10 @@ const icons:Record<string,string>={
 };
 const icon=(name:string)=>`<svg class="player-icon icon-${name}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[name]}</svg>`;
 const button=(id:string,label:string,content:string)=>`<button type="button" class="player-button" id="${id}" aria-label="${label}" title="${label}">${content}</button>`;
-export function player(share:string){return `<section class="player" id="video-player" aria-label="Video player" tabindex="0">
- <div class="video-stage"><video id="watch-video" controls playsinline preload="metadata" src="/media/${share}" data-share="${share}"></video>
+// Width and height let the frame take the video's own shape before metadata loads.
+const dim=(n:unknown)=>{const v=Math.round(Number(n));return Number.isFinite(v)&&v>0&&v<100000?v:0;};
+export function player(share:string,width?:number,height?:number){const w=dim(width),h=dim(height),size=w&&h?` data-width="${w}" data-height="${h}"`:'';return `<section class="player" id="video-player" aria-label="Video player" tabindex="0">
+ <div class="video-stage"${size}><video id="watch-video" controls playsinline preload="metadata" src="/media/${share}" data-share="${share}"></video>
  <button type="button" class="center-play" id="center-play" aria-label="Play video" hidden>${icon('play')}${icon('replay')}</button>
  <div class="player-loading" id="player-loading" role="status" hidden><span class="player-spinner"></span><span class="sr-only">Loading video</span></div>
  <div class="player-error" id="player-error" role="alert" hidden><p>This video could not load.</p><button type="button" class="quiet" id="player-retry">Try again</button></div></div>

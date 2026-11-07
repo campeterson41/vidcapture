@@ -99,7 +99,7 @@ class Recorder extends EventEmitter {
     // A fixed folder (tests) cannot be changed from the app.
     this.fixedOutput=!!options.outputDir;
     this.outputDir=options.outputDir||path.join(os.homedir(),'Videos/Capture');
-    this.state={phase:'idle',elapsed:0,target:null,settings:{...DEFAULTS},devices:{microphones:[],cameras:[],monitors:[]},outputDir:this.outputDir,recent:[],lastFile:null,error:null,cameraPreview:false};
+    this.state={phase:'idle',elapsed:0,target:null,settings:{...DEFAULTS},devices:{microphones:[],cameras:[],monitors:[]},outputDir:this.outputDir,recent:[],lastFile:null,error:null,micCleanupError:null,cameraPreview:false};
     this.child=null;this.camera=null;this.started=0;this.pausedAt=0;this.pauseTotal=0;this.rawFile=null;this.log='';this.finalizing=null;
     this.beforePick=options.beforePick||(()=>{});this.afterPick=options.afterPick||(()=>{});
     this.cameraPlacement=null;this.lastCameraGeometry=null;
@@ -191,13 +191,13 @@ class Recorder extends EventEmitter {
   }
   async listWindows(){
     const clients=JSON.parse((await run('hyprctl',['clients','-j'])).stdout);
-    return clients.filter(c=>c.mapped&&!c.hidden&&c.visible!==false&&!/^capture(?:-|$)/.test(c.class||'')).map(c=>({id:c.address,title:c.title||c.class,app:c.class}));
+    return clients.filter(c=>c.mapped&&!c.hidden&&c.visible!==false&&!/^(?:vid)?capture(?:-|$)/.test(c.class||'')).map(c=>({id:c.address,title:c.title||c.class,app:c.class}));
   }
   async chooseTarget(id) {
     this.idleOnly();await this.closeCamera();
     if(typeof id==='string'&&/^window:0x[0-9a-f]+$/i.test(id)){
       const clients=JSON.parse((await run('hyprctl',['clients','-j'])).stdout);
-      const client=clients.find(c=>c.address===id.slice(7)&&c.mapped&&!c.hidden&&c.visible!==false&&!/^capture(?:-|$)/.test(c.class||''));
+      const client=clients.find(c=>c.address===id.slice(7)&&c.mapped&&!c.hidden&&c.visible!==false&&!/^(?:vid)?capture(?:-|$)/.test(c.class||''));
       if(!client)throw new Error('That window is no longer available. Choose it again.');
       await this.selectWindow(client);return this.set({phase:'idle'});
     }
@@ -433,7 +433,7 @@ class Recorder extends EventEmitter {
     let transport=null;
     if(intelDevice) {
       const binary=path.join(__dirname,'.local/bin/capture-camera-stream');
-      try{await fs.access(binary);}catch{throw new Error('The camera transport is missing. Reinstall Capture.');}
+      try{await fs.access(binary);}catch{throw new Error('The camera transport is missing. Reinstall VidCapture.');}
       transport=spawn(binary,[this.state.settings.camera,String(mode.width),String(mode.height),String(mode.fps)],{stdio:['ignore','pipe','pipe']});
       let transportLog='';
       transport.stderr.on('data',b=>{transportLog=(transportLog+b).slice(-4000);cameraLog=(cameraLog+b).slice(-4000);});
@@ -566,20 +566,25 @@ class Recorder extends EventEmitter {
         if(!mode.width)throw new Error('This camera has no 30 fps mode to record.');
         recordTarget={...target,device,mode};
       }
-      else if(this.state.settings.camera!=='none')await this.openCamera();else await this.closeCamera();
+      else if(this.state.settings.camera!=='none'){
+        // Keep the existing preview stream alive when starting a take.
+        if(this.camera&&this.camera.exitCode===null&&!this.camera.signalCode)await this.positionCamera(true);
+        else await this.openCamera();
+      }else await this.closeCamera();
       const stamp=new Date().toISOString().replace(/[:.]/g,'-');
       this.rawFile=path.join(this.outputDir,`Capture-${stamp}.mkv`);
       let engine='gpu-screen-recorder';
       const env={...process.env};
       if(target.kind==='window'){
         engine=path.join(__dirname,'.local/bin/gpu-screen-recorder-follow');
-        try{await fs.access(engine);}catch{throw new Error('Window recording is unavailable. Reinstall Capture to restore it.');}
+        try{await fs.access(engine);}catch{throw new Error('Window recording is unavailable. Reinstall VidCapture to restore it.');}
         this.followMonitor=containingMonitor(this.state.devices.monitors,target)?.id;
         await this.writeFollowState(target);env.CAPTURE_FOLLOW_STATE=this.followFile;
       }
       // Live microphone cleanup, if on. A failure stops the start so a take never
       // silently records without the cleanup that was chosen.
       const clean=this.audioChain?await this.audioChain.ensure(this.state.settings):null;
+      if(this.state.micCleanupError)this.state.micCleanupError=null;
       this.takeAudio={clean:!!clean,backup:!!(clean&&this.state.settings.microphone!=='none'&&this.state.settings.micBackup)};
       const child=spawn(engine,buildArgs(recordTarget,this.state.settings,this.rawFile,clean),{stdio:['ignore','ignore','pipe'],env});
       this.child=child;

@@ -6,6 +6,8 @@ const client={address:'0x123',pid:123,stableId:'abc',class:'editor',title:'My wa
 test('window picking records identity and ignores Capture and hidden windows',()=>{
  const area={x:100,y:120,width:800,height:480};
  assert.equal(selectedWindow([{...client,class:'capture'},{...client,hidden:true},client],area),client);
+ // Since alpha.3 the app's own windows report class "vidcapture".
+ assert.equal(selectedWindow([{...client,class:'vidcapture'},client],area),client);
  const target=windowTarget(client);assert.equal(target.label,'My walkthrough');
  assert.equal(matchingWindow([{...client,pid:999}],target),undefined);
  assert.equal(matchingWindow([{...client,stableId:'replacement'}],target),undefined);

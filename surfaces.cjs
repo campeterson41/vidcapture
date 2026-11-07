@@ -28,7 +28,9 @@ async function clients(){return JSON.parse(await hypr(['clients','-j']));}
 async function monitors(){return JSON.parse(await hypr(['monitors','-j'])).filter(m=>!m.disabled).map(m=>({...geometry.logicalMonitor(m),label:displayName(m)}));}
 
 class Surfaces{
-  constructor({recorder,showMain,hideMain,mainVisible,sendMain,preload}){
+  constructor({recorder,showMain,hideMain,mainVisible,sendMain,preload,onSettings}){
+    // onSettings runs after the panel saves settings, so the main process can follow along (live mic chain).
+    this.onSettings=onSettings||(async()=>{});
     this.recorder=recorder;this.sendMain=sendMain||(()=>{});this.mainLevel=false;this.mainSnapshot=null;this.showMain=showMain;this.hideMain=hideMain;this.mainVisible=mainVisible||(()=>false);this.preload=preload||path.join(__dirname,'surfaces-preload.cjs');
     this.bar=null;this.panel=null;this.panelArgs={};this.panelSnapshot=null;this.overlays=new Map();this.controls=null;this.picker=null;this.controlsBusy=null;
     // Optional test limit, for example CAPTURE_PICKER_MONITORS=eDP-1.
@@ -38,7 +40,7 @@ class Surfaces{
 
   async rule(name,title,extra){
     const base=`float=true,pin=true,no_anim=true,no_blur=true,no_shadow=true,no_dim=true,decorate=false,border_size=0,rounding=0,opacity="1.0 override 1.0 override",tag="-default-opacity"`;
-    await hypr(['eval',`hl.window_rule({name=${lua(name)},match={class="^capture$",title=${lua('^'+title.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'$')}},${base}${extra?','+extra:''}})`]);
+    await hypr(['eval',`hl.window_rule({name=${lua(name)},match={class="^(vid)?capture$",title=${lua('^'+title.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'$')}},${base}${extra?','+extra:''}})`]);
   }
 
   // Finds our window by process and title, then floats, pins, sizes and moves it.
@@ -110,7 +112,7 @@ class Surfaces{
   async panelData(){
     const [ms,list]=await Promise.all([monitors(),clients()]);
     const visible=new Set(geometry.visibleWindows(list,ms).map(w=>w.address));
-    const windows=list.filter(c=>c.mapped&&!c.hidden&&c.workspace&&c.workspace.id>0&&!/^capture(?:-|$)/.test(c.class||'')&&c.size&&c.size[0]>=32&&c.size[1]>=32)
+    const windows=list.filter(c=>c.mapped&&!c.hidden&&c.workspace&&c.workspace.id>0&&!/^(?:vid)?capture(?:-|$)/.test(c.class||'')&&c.size&&c.size[0]>=32&&c.size[1]>=32)
       .sort((a,b)=>(Number.isFinite(a.focusHistoryID)?a.focusHistoryID:1e6)-(Number.isFinite(b.focusHistoryID)?b.focusHistoryID:1e6))
       .slice(0,24)
       .map(c=>({address:c.address,title:c.title||c.class||'Window',app:c.class||'',workspace:c.workspace.name||String(c.workspace.id),visible:visible.has(c.address),x:c.at[0],y:c.at[1],width:c.size[0],height:c.size[1]}));
@@ -367,7 +369,7 @@ class Surfaces{
   // Thumbnails travel once, with the first state; later updates omit them.
   panelState(full=true){
     const s=this.recorder.snapshot(),snap=this.panelSnapshot||{monitors:[],windows:[]};
-    const out={phase:s.phase,elapsed:s.elapsed,shortcuts:s.shortcuts||{},settings:s.settings,devices:{microphones:s.devices.microphones,cameras:s.devices.cameras},target:s.target,cameraPreview:!!s.cameraPreview,error:s.error,job:s.job?{running:!!s.job.running}:null,here:snap.here};
+    const out={phase:s.phase,elapsed:s.elapsed,shortcuts:s.shortcuts||{},settings:s.settings,devices:{microphones:s.devices.microphones,cameras:s.devices.cameras},target:s.target,cameraPreview:!!s.cameraPreview,error:s.error,micCleanupError:s.micCleanupError||null,job:s.job?{running:!!s.job.running}:null,here:snap.here};
     // The panel page is rebuilt on every open, so the last choice per tab
     // lives here.
     const t=s.target;
@@ -461,7 +463,15 @@ class Surfaces{
   async panelSave(partial){
     if(!partial||typeof partial!=='object')throw new Error('Invalid settings.');
     await this.recorder.saveSettings(partial);
+    await this.onSettings();
     if(this.recorder.state.error&&!BUSY.has(this.recorder.state.phase))this.recorder.set({error:null});
+    return this.panelState(false);
+  }
+
+  // Try again after a microphone cleanup failure: the same sync a settings change runs.
+  async panelRetryMic(){
+    if(this.busy())throw new Error('Stop and save this recording first.');
+    await this.onSettings();
     return this.panelState(false);
   }
 
@@ -631,7 +641,7 @@ class Surfaces{
   }
 
   async activeAddress(){
-    try{const a=JSON.parse(await hypr(['activewindow','-j']));return a?.address&&!/^capture(?:-|$)/.test(a.class||'')?a.address:null;}catch{return null;}
+    try{const a=JSON.parse(await hypr(['activewindow','-j']));return a?.address&&!/^(?:vid)?capture(?:-|$)/.test(a.class||'')?a.address:null;}catch{return null;}
   }
 
   /* Picker overlays */
@@ -834,6 +844,7 @@ class Surfaces{
       expand:[['controls'],(_w,on)=>this.setExpanded(!!on)],
       panelState:[['panel'],()=>this.panelState()],
       panelSave:[['panel'],(_w,partial)=>this.panelSave(partial)],
+      panelRetryMic:[['panel'],()=>this.panelRetryMic()],
       panelChoose:[['panel'],(_w,sel)=>this.panelChoose(sel)],
       panelPick:[['panel'],(_w,mode)=>{if(!['window','area'].includes(mode))throw new Error('Unknown picker mode.');return this.panelPick(mode);}],
       panelPreview:[['panel'],async()=>{await this.recorder.previewCamera();this.previewOff=!this.recorder.state.cameraPreview;this.autoPreview=false;await this.raisePanel();return this.panelState(false);}],

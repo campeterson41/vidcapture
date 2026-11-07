@@ -2,6 +2,7 @@ const {app,BrowserWindow,ipcMain,Tray,Menu,nativeImage,dialog,shell,powerSaveBlo
 const fs=require('node:fs');
 const fsp=require('node:fs/promises');
 const {Readable}=require('node:stream');
+const {createAutoCopy}=require('./autocopy.cjs');
 const path=require('node:path');
 const {execFile}=require('node:child_process');
 const {promisify}=require('node:util');
@@ -13,17 +14,18 @@ const {Titles}=require('./titles.cjs');
 const {Publisher,ORIGIN}=require('./publisher.cjs');
 const {Surfaces}=require('./surfaces.cjs');
 const {Library,versionBase}=require('./library.cjs');
-const {AudioChain}=require('./audio-chain.cjs');
+const {AudioChain,ChainWatch,syncCleanup}=require('./audio-chain.cjs');
 const {CameraSettings}=require('./camera-settings.cjs');
 const {CameraEffects}=require('./camera-effects.cjs');
 const {CameraProfiles}=require('./camera-profiles.cjs');
+const {startExtensionBridge}=require('./extension-bridge.cjs');
 const {shortcutsFrom}=require('./hotkeys.cjs');
 protocol.registerSchemesAsPrivileged([{scheme:'capture-media',privileges:{standard:true,secure:true,stream:true,supportFetchAPI:true}}]);
 app.setName('Capture');
 app.setPath('userData',path.join(app.getPath('appData'),'capture'));
 const locked=app.requestSingleInstanceLock();
 if(!locked){app.quit();}else{
-  let win,tray,recorder,media,transcripts,publisher,surfaces,titles,editorFile=null,allowQuit=false,closing=false,inhibit=null;
+  let win,tray,recorder,media,transcripts,publisher,surfaces,titles,editorFile=null,allowQuit=false,closing=false,inhibit=null,extensionBridge=null,micWatch=null;
   const show=()=>{if(win){win.show();if(win.isMinimized())win.restore();win.focus();}};
   // `capture --panel [--screen=NAME] [--x=N]` opens the record drop-down; the
   // top bar icon passes its screen and position. `--pick` is the older name.
@@ -40,6 +42,7 @@ if(!locked){app.quit();}else{
   const hotkey=argv=>argv.includes('--toggle-recording')?'record':argv.includes('--toggle-pause')?'pause':null;
   const runHotkey=kind=>(kind==='record'?surfaces.toggleRecording():surfaces.togglePause()).catch(e=>console.error('shortcut',e));
   app.on('second-instance',(_event,argv)=>{
+    if(argv.includes('--extension-service'))return;
     const key=hotkey(argv);
     if(key){if(surfaces)runHotkey(key);return;}
     const args=panelArgs(argv);if(args&&surfaces)openPanel(args);else show();
@@ -47,6 +50,9 @@ if(!locked){app.quit();}else{
   async function requestClose(){
     if(closing)return;
     closing=true;
+    // No microphone recovery may start a chain once quitting begins, even if a step below
+    // waits (the editor flush, a dialog). The watch restarts only if the close is abandoned.
+    const watchDone=micWatch?.stop();
     try{
       if(win && !win.isDestroyed())await win.webContents.executeJavaScript('window.captureFlushEdits?.()');
       if(recorder.state.job?.running){
@@ -59,8 +65,11 @@ if(!locked){app.quit();}else{
         if(response!==1)return;
         await recorder.stop();
       }
-      surfaces?.dispose();await recorder.audioChain?.stop().catch(()=>{});await titles?.flush().catch(()=>{});media?.dispose();transcripts?.dispose();await recorder.dispose();allowQuit=true;app.quit();
-    }catch(e){show();await dialog.showMessageBox(win,{type:'error',message:e.message});}finally{closing=false;}
+      await extensionBridge?.close();surfaces?.dispose();
+      // Stop the chain (which also cancels a recovery in progress) and wait for the watch to drain.
+      await recorder.audioChain?.stop().catch(()=>{});await watchDone;
+      await titles?.flush().catch(()=>{});media?.dispose();transcripts?.dispose();await recorder.dispose();allowQuit=true;app.quit();
+    }catch(e){show();await dialog.showMessageBox(win,{type:'error',message:e.message});}finally{closing=false;if(!allowQuit)micWatch?.start();}
   }
   app.on('before-quit',e=>{if(!allowQuit){e.preventDefault();requestClose();}});
   app.whenReady().then(async()=>{
@@ -72,7 +81,7 @@ if(!locked){app.quit();}else{
     recorder.cameraProfiles=new CameraProfiles([path.join(__dirname,'camera-profiles'),path.join(app.getPath('appData'),'vidcapture','camera-profiles')]);
     await recorder.cameraProfiles.load();
     await recorder.init();
-    recorder.audioChain.ensure(recorder.state.settings).catch(()=>{});
+    syncCleanup({chain:recorder.audioChain,recorder,isBusy:()=>ACTIVE.has(recorder.state.phase)}).catch(()=>{});
     media=new MediaTools(recorder);transcripts=new Transcripts(recorder,media);media.onEnhanced=output=>transcripts.carry(output);publisher=new Publisher(recorder,media,{openExternal:url=>shell.openExternal(url),transcript:file=>transcripts.get(file)});await publisher.init();
     // New recordings are titled in the background and renamed once nothing has
     // them open. The editor's file counts as open until another file replaces it.
@@ -106,7 +115,7 @@ if(!locked){app.quit();}else{
     });
     const library=new Library(recorder,{origin:()=>publisher.origin});
     win=new BrowserWindow({width:820,height:650,minWidth:390,minHeight:560,title:'VidCapture',frame:false,backgroundColor:'#1a1917',show:false,icon:path.join(__dirname,'ui/icon.png'),webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
-    surfaces=new Surfaces({recorder,showMain:show,hideMain:()=>{if(win&&!win.isDestroyed())win.hide();},mainVisible:()=>!!win&&!win.isDestroyed()&&win.isVisible(),sendMain:(channel,value)=>{if(win&&!win.isDestroyed())win.webContents.send(channel,value);}});
+    surfaces=new Surfaces({recorder,onSettings:()=>syncMicChain(),showMain:show,hideMain:()=>{if(win&&!win.isDestroyed())win.hide();},mainVisible:()=>!!win&&!win.isDestroyed()&&win.isVisible(),sendMain:(channel,value)=>{if(win&&!win.isDestroyed())win.webContents.send(channel,value);}});
     win.webContents.setWindowOpenHandler(()=>({action:'deny'}));
     win.webContents.on('will-navigate',(event,url)=>{if(url!==win.webContents.getURL())event.preventDefault();});
     win.webContents.session.setPermissionRequestHandler((_wc,_p,callback)=>callback(false));
@@ -132,14 +141,14 @@ if(!locked){app.quit();}else{
         if(recorder.state.settings.cameraBackgroundImage===name)await recorder.saveSettings({cameraBackgroundImage:'',...(recorder.state.settings.cameraBackground==='image'?{cameraBackground:'off'}:{})});
         await recorder.cameraEffects.removeImage(name);return studioInfo();
       },
-      setMicLevel:async percent=>{const mic=recorder.state.settings.microphone;if(mic==='none')throw new Error('Choose a microphone first.');await recorder.audioChain.setLevel(mic,percent);return studioInfo();},start:async()=>{win.hide();try{if(!(await surfaces.countdown())){show();return recorder.snapshot();}return await recorder.start();}catch(e){show();throw e;}},pause:()=>recorder.pause(),stop:()=>recorder.stop(),restart:()=>surfaces.restartTake(),discard:()=>surfaces.discardTake(),previewCamera:()=>recorder.previewCamera(),
+      setMicLevel:async percent=>{const mic=recorder.state.settings.microphone;if(mic==='none')throw new Error('Choose a microphone first.');await recorder.audioChain.setLevel(mic,percent);return studioInfo();},start:async()=>{if(surfaces.busy())throw new Error('Wait for the current recording action to finish.');recorder.idleOnly();surfaces.startPending=true;win.hide();try{if(!(await surfaces.countdown())){show();return recorder.snapshot();}return await recorder.start();}catch(e){show();throw e;}finally{surfaces.startPending=false;}},pause:()=>recorder.pause(),stop:()=>recorder.stop(),restart:()=>surfaces.restartTake(),discard:()=>surfaces.discardTake(),previewCamera:()=>recorder.previewCamera(),
       getMedia:file=>{editorFile=file;titles.applyRenames().catch(()=>{});return media.getMedia(file);},getWaveform:file=>media.getWaveform(file),saveEdits:(file,keep)=>media.saveEdits(file,keep),exportEdit:(file,keep)=>media.exportEdit(file,keep),enhanceAudio:file=>media.enhanceAudio(file),enhanceAudioFast:file=>media.enhanceAudioFast(file),enhanceAudioQuick:(file,options)=>media.enhanceAudioQuick(file,options),cancelJob:()=>{publisher.cancel();return media.cancelJob();},
       publishVideo:(file,title,keep)=>publisher.publish(file,title,keep),
       getTranscript:file=>transcripts.get(file),makeTranscript:file=>transcripts.create(file),cancelTranscript:()=>transcripts.cancel(),
       openLibrary:async()=>shell.openExternal(await publisher.libraryURL()),
       copyShareCard:async()=>{const card=await publisher.card();clipboard.write(card);if(!clipboard.availableFormats().includes('text/html'))throw new Error('The video card could not be copied. Try again.');return true;},
       // One Copy link: rich editors (email) paste the GIF card, plain fields (Slack, LinkedIn) paste the URL.
-      copyShareLink:async()=>{const url=recorder.state.share?.url;if(!url?.startsWith(publisher.origin+'/v/'))throw new Error('No share link is ready.');let card=null;try{card=await publisher.card();}catch{}if(card?.text===url)clipboard.write(card);else clipboard.writeText(url);return true;},
+      copyShareLink:()=>copyShareLink(),
       openShareLink:async()=>{const url=recorder.state.share?.url;if(!url?.startsWith(publisher.origin+'/v/'))throw new Error('No share link is ready.');await shell.openExternal(url);},
       openFile:async file=>{const p=await recorder.allowedFile(file);const error=await shell.openPath(p);if(error)throw new Error(error);},
       chooseOutputDir:async()=>{
@@ -151,6 +160,8 @@ if(!locked){app.quit();}else{
       openBar:()=>surfaces.openBar({origin:'main'}),sources:()=>surfaces.mainSources(),chooseSource:sel=>surfaces.mainChoose(sel),watchLevel:on=>surfaces.watchMainLevel(on),pickOnScreen:mode=>surfaces.openPicker(mode,{intent:'select',origin:'main'}),
       minimize:()=>win.minimize(),close:()=>requestClose()
     };
+    const autoCopy=createAutoCopy({getState:()=>recorder.state,set:patch=>recorder.set(patch),card:()=>publisher.card(),write:data=>clipboard.write(data),readText:()=>clipboard.readText()});
+    async function copyShareLink(){const url=recorder.state.share?.url;if(!url?.startsWith(publisher.origin+'/v/'))throw new Error('No share link is ready.');let card=null;try{card=await publisher.card();}catch{}if(card?.text===url)clipboard.write(card);else clipboard.writeText(url);return true;}
     async function studioInfo(){
       const s=recorder.state.settings;
       const [camera,mic,audio,effectsReady,backgrounds]=await Promise.all([
@@ -160,16 +171,21 @@ if(!locked){app.quit();}else{
         recorder.cameraEffects.available(),
         recorder.cameraEffects.images()
       ]);
-      return {camera,mic,audio,effects:{available:effectsReady,backgrounds},cleanup:{running:recorder.audioChain.running(),error:micChainError}};
+      return {camera,mic,audio,effects:{available:effectsReady,backgrounds},cleanup:{running:recorder.audioChain.running(),error:recorder.state.micCleanupError||null}};
     }
     // Keeps live cleanup in step with the settings while idle, so the level meter
     // shows what will actually be recorded. A take checks again when it starts.
-    let micChainError=null;
+    // A cleanup failure lives in recorder state, so the panel and the main window both show it.
     async function syncMicChain(){
-      if(ACTIVE.has(recorder.state.phase))return;
-      try{await recorder.audioChain.ensure(recorder.state.settings);micChainError=null;}catch(e){micChainError=e.message;}
+      // Nothing starts a chain while quitting (Try again or a settings save arriving late).
+      if(closing||ACTIVE.has(recorder.state.phase))return;
+      await syncCleanup({chain:recorder.audioChain,recorder,isBusy:()=>ACTIVE.has(recorder.state.phase)});
       surfaces?.syncLevel();
     }
+    // Between takes, notice a chain whose graph has gone (for example when the microphone
+    // fails) and recover once; a lasting failure stays visible with Try again.
+    micWatch=new ChainWatch({chain:recorder.audioChain,isBusy:()=>ACTIVE.has(recorder.state.phase),recover:async()=>{surfaces?.syncLevel();await syncMicChain();}});
+    micWatch.start();
     for(const [name,handler] of Object.entries(actions))ipcMain.handle(`capture:${name}`,async(event,...args)=>{
       if(event.sender!==win.webContents || event.senderFrame!==win.webContents.mainFrame)throw new Error('Untrusted app frame.');
       return handler(...args);
@@ -177,7 +193,11 @@ if(!locked){app.quit();}else{
 
     // Recordings library. Same main-window-only gate as the actions above.
     const shareURL=url=>{if(typeof url!=='string'||!new RegExp('^'+publisher.origin.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'/v/[a-f0-9]{48}$').test(url))throw new Error('That is not a VidCapture share link.');return url;};
-    const libraryActions={syncShares:()=>publisher.syncShares().catch(()=>({synced:false,changed:0})),copyLink:async url=>{clipboard.writeText(shareURL(url));return true;},openLink:async url=>{await shell.openExternal(shareURL(url));},listRecordings:()=>library.list(),recordingDetails:name=>library.details(name),setCurrentVersion:(root,name)=>library.setCurrentVersion(root,name)};
+    const libraryActions={syncShares:()=>publisher.syncShares().catch(()=>({synced:false,changed:0})),copyLink:async url=>{clipboard.writeText(shareURL(url));return true;},openLink:async url=>{await shell.openExternal(shareURL(url));},listRecordings:()=>library.list(),recordingDetails:name=>library.details(name),setCurrentVersion:(root,name)=>library.setCurrentVersion(root,name),
+      // A new title shows at once; a recording still named Capture-<time> takes it as its file name when nothing has it open.
+      renameRecording:async(root,title)=>{const items=await library.rename(root,title);if(/^Capture-/.test(String(root))){titles.pending.add(path.join(recorder.outputDir,root));titles.applyRenames().catch(()=>{});}return items;},
+      removeRecording:async root=>{const items=await library.remove(root,file=>shell.trashItem(file));if(editorFile&&!(await fsp.access(editorFile).then(()=>true,()=>false)))editorFile=null;return items;},
+      showRecording:async name=>{if(typeof name!=='string'||path.basename(name)!==name)throw new Error('Choose a file from your recordings folder.');shell.showItemInFolder(await recorder.allowedFile(path.join(recorder.outputDir,name)));}};
     for(const [name,handler] of Object.entries(libraryActions))ipcMain.handle(`capture:${name}`,async(event,...args)=>{
       if(event.sender!==win.webContents || event.senderFrame!==win.webContents.mainFrame)throw new Error('Untrusted app frame.');
       return handler(...args);
@@ -221,16 +241,20 @@ if(!locked){app.quit();}else{
       if(state.renamed?.to===state.lastFile)lastTitled=state.lastFile;
       if(state.phase==='saved'&&state.lastFile&&state.lastFile!==lastTitled){lastTitled=state.lastFile;titles.add(state.lastFile);}
       if(state.renamed&&editorFile===state.renamed.from)editorFile=state.renamed.to;
+      // A finished share puts its link on the clipboard, ready to paste.
+      autoCopy(state);
       const busy=['starting','recording','paused','stopping'].includes(state.phase)||!!state.job?.running;
       if(wasBusy&&!busy)titles.applyRenames().catch(()=>{});
       wasBusy=busy;
     });
     await win.loadFile(path.join(__dirname,'ui/index.html'));
     update(recorder.snapshot());
+    try{extensionBridge=await startExtensionBridge({recorder,actions,surfaces,show});}
+    catch(e){console.error('Browser controls could not start:',e.message);}
     // Shortcut keys shown in tooltips: whatever Hyprland binds to the toggles.
     // CAPTURE_TEST_BINDS (a JSON list like `hyprctl binds -j`) stands in for the live binds in isolated checks.
     (process.env.CAPTURE_TEST_BINDS?Promise.resolve({stdout:process.env.CAPTURE_TEST_BINDS}):run('hyprctl',['binds','-j'],{timeout:3000})).then(({stdout})=>recorder.set({shortcuts:shortcutsFrom(JSON.parse(stdout))})).catch(()=>{});
     const startKey=hotkey(process.argv),startArgs=panelArgs(process.argv);
-    if(startKey)runHotkey(startKey);else if(startArgs)openPanel(startArgs);else show();
+    if(startKey)runHotkey(startKey);else if(startArgs)openPanel(startArgs);else if(!process.argv.includes('--extension-service'))show();
   }).catch(e=>{console.error(e);dialog.showErrorBox('Capture could not open',e.message);allowQuit=true;app.quit();});
 }

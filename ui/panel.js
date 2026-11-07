@@ -26,6 +26,8 @@
 
   // com.mitchellh.ghostty -> Ghostty, chromium -> Chromium
   const appName = (cls) => {
+    // Chromium app-mode windows (chrome-<host>__<path>-<profile>) are web apps, not "Localhost Default".
+    if (/^(?:chrome|chromium|brave|brave-browser|microsoft-edge|msedge|vivaldi)-[^_]+__/i.test(String(cls || ''))) return 'Web app';
     const last = String(cls || '').split('.').pop().replace(/[-_]+/g, ' ').trim();
     return last ? last.charAt(0).toUpperCase() + last.slice(1) : 'Window';
   };
@@ -255,6 +257,9 @@
     $('mic-select').classList.toggle('off', s.microphone === 'none');
     $('camera-select').querySelector('use').setAttribute('href', s.camera === 'none' ? '#i-camera-off' : '#i-camera');
     $('mic-select').querySelector('use').setAttribute('href', s.microphone === 'none' ? '#i-mic-off' : '#i-mic');
+    // Live microphone cleanup that failed, with a way to try again.
+    const micError = s.microphone !== 'none' ? state.micCleanupError || '' : '';
+    if ($('mic-error-text').textContent !== micError) { $('mic-error-text').textContent = micError; $('mic-error').hidden = !micError; fit(); }
     const preview = $('preview');
     preview.hidden = s.camera === 'none';
     preview.setAttribute('aria-pressed', state.cameraPreview ? 'true' : 'false');
@@ -385,6 +390,7 @@
   }, true);
   $('scroll').addEventListener('scroll', () => { if (openMenu) closeMenus(false); });
   $('preview').addEventListener('click', () => act(() => vc.panelPreview()));
+  $('mic-retry').addEventListener('click', () => act(() => vc.panelRetryMic()));
   $('system-audio').addEventListener('change', (e) => {
     const box = e.target, want = box.checked;
     // Show the saved value again if the save is refused or never runs.

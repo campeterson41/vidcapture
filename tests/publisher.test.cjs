@@ -243,3 +243,15 @@ test('no transcript means no caption request',async()=>{
   assert.equal(result.error,undefined);
   await fs.rm(f.root,{recursive:true,force:true});
 });
+test('an unreachable service says what to do instead of fetch failed',async()=>{
+  const {networkError}=require('../publisher.cjs');
+  assert.match(networkError(new TypeError('fetch failed'),ORIGIN).message,/^Could not reach vidcapture\.stream\. Check your internet connection/);
+  assert.match(networkError(Object.assign(new Error('timed out'),{name:'TimeoutError'}),ORIGIN).message,/not responding/);
+  const abort=Object.assign(new Error('aborted'),{name:'AbortError'});assert.equal(networkError(abort,ORIGIN),abort);
+  const f=await fixture(1);
+  try{
+    const p=new Publisher(f.rec,f.media,{fetch:async()=>{throw new TypeError('fetch failed');},retryDelay:1});
+    p.publish(f.file,'Offline test');const result=await f.media.task;
+    assert.match(result.error.message,/Could not reach vidcapture\.stream/);
+  }finally{await fs.rm(f.root,{recursive:true,force:true});}
+});

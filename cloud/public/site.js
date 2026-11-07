@@ -26,6 +26,37 @@ if(location.pathname==='/connect'){
  const code=location.hash.slice(1);history.replaceState(null,'','/connect');
  api('/api/session',{method:'POST',body:JSON.stringify({code})}).then(()=>location.replace('/library')).catch(error=>$('connect-status').textContent=error.message);
 }
+// Turnstile: loaded only on pages that carry a sitekey and a widget slot. Each slot names its action.
+// Tokens are single-use, so every attempt resets its widget afterwards.
+const human={ids:new Map(),ready:null};
+function loadHuman(){
+ if(human.ready)return human.ready;
+ const key=document.querySelector('meta[name="turnstile-sitekey"]')?.content;
+ if(!key||!document.querySelector('[data-turnstile]'))return human.ready=Promise.resolve();
+ human.ready=new Promise((resolve,reject)=>{
+  // The check runs out of sight. If it cannot finish on its own, the widget appears so the person can complete it.
+  human.render=(slot,appearance)=>{const action=slot.dataset.turnstile,old=human.ids.get(action);if(old!==undefined)try{window.turnstile.remove(old);}catch{}
+   if(appearance==='always')slot.classList.add('shown');
+   human.ids.set(action,window.turnstile.render(slot,{sitekey:key,action,appearance,size:'flexible',
+    'before-interactive-callback':()=>slot.classList.add('shown'),
+    'error-callback':()=>{if(appearance!=='always')human.render(slot,'always');return true;},
+    'unsupported-callback':()=>{slot.classList.add('shown');slot.textContent='This browser cannot run the security check. Try an up-to-date browser.';}}));};
+  window.vcTurnstileReady=()=>{for(const slot of document.querySelectorAll('[data-turnstile]'))human.render(slot,'interaction-only');resolve();};
+  const script=document.createElement('script');script.src='https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit&onload=vcTurnstileReady';script.async=true;
+  script.onerror=()=>{human.ready=null;reject(new Error('The security check could not load. Check your connection, then try again.'));};document.head.append(script);
+ });
+ return human.ready;
+}
+async function humanToken(action){
+ await loadHuman();const id=human.ids.get(action),t=window.turnstile;if(id===undefined||!t)return undefined;
+ const slot=document.querySelector(`[data-turnstile="${action}"]`);
+ // A silent check usually finishes within a few seconds. A visible one waits for the person, so ask right away.
+ for(let i=0;i<100;i++){const id=human.ids.get(action);if(t.isExpired(id))t.reset(id);const token=t.getResponse(id);if(token)return token;if(i>=6&&slot?.classList.contains('shown'))break;await new Promise(r=>setTimeout(r,150));}
+ if(slot&&!slot.classList.contains('shown'))human.render(slot,'always');
+ throw new Error('Complete the security check on this page, then try again.');
+}
+function resetHuman(action){const id=human.ids.get(action);if(id!==undefined)try{window.turnstile.reset(id);}catch{}}
+if(document.querySelector('[data-turnstile]'))loadHuman().catch(()=>{});
 function setStatus(node,text,error=false){node.textContent=text;node.classList.toggle('error',error);}
 const validEmail=v=>/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
 // Log in / Sign up tabs. onDone runs after a session starts.
@@ -42,8 +73,10 @@ function authTabs(onDone){
   if(path==='/api/signup'&&password.length<10){setStatus(status,'Use at least 10 characters for your password.',true);$(passId).focus();return;}
   if(!password){setStatus(status,'Enter your password.',true);$(passId).focus();return;}
   button.disabled=true;setStatus(status,busy);
-  try{await api(path,{method:'POST',body:JSON.stringify({email,password})});await onDone(path==='/api/signup');}
+  const signup=path==='/api/signup';
+  try{const turnstile=signup?await humanToken('signup'):undefined;await api(path,{method:'POST',body:JSON.stringify({email,password,turnstile})});await onDone(signup);}
   catch(error){setStatus(status,error.message,true);button.disabled=false;}
+  finally{if(signup)resetHuman('signup');}
  };
  submit(panels.login,'/api/login','login-email','login-password','Logging in…');
  submit(panels.signup,'/api/signup','signup-email','signup-password','Creating your account…');
@@ -51,8 +84,8 @@ function authTabs(onDone){
   const status=panels.login.querySelector('.login-status'),email=$('login-email').value.trim();
   if(!validEmail(email)){setStatus(status,'Enter your email above, then choose Email me a sign-in link.',true);$('login-email').focus();return;}
   $('email-link').disabled=true;setStatus(status,'Sending…');
-  try{await api('/api/signin',{method:'POST',body:JSON.stringify({email})});setStatus(status,`If ${email} has an account, a sign-in link is on its way. It expires in 15 minutes.`);}
-  catch(error){setStatus(status,error.message,true);}finally{$('email-link').disabled=false;}
+  try{const turnstile=await humanToken('signin');await api('/api/signin',{method:'POST',body:JSON.stringify({email,turnstile})});setStatus(status,`If ${email} has an account, a sign-in link is on its way. It expires in 15 minutes.`);}
+  catch(error){setStatus(status,error.message,true);}finally{$('email-link').disabled=false;resetHuman('signin');}
  };
 }
 if(location.pathname==='/login'||location.pathname==='/signup')authTabs(async()=>location.replace('/library'));
@@ -81,7 +114,7 @@ if($('forgot-form')){
  const form=$('forgot-form'),status=form.querySelector('.login-status');
  form.onsubmit=async e=>{e.preventDefault();const email=$('forgot-email').value.trim();if(!validEmail(email)){setStatus(status,'Enter a valid email address.',true);return;}
   const b=form.querySelector('button');b.disabled=true;setStatus(status,'Sending…');
-  try{await api('/api/password/forgot',{method:'POST',body:JSON.stringify({email})});setStatus(status,`If ${email} has an account, a reset link is on its way. It expires in one hour.`);}catch(error){setStatus(status,error.message,true);}finally{b.disabled=false;}};
+  try{const turnstile=await humanToken('forgot');await api('/api/password/forgot',{method:'POST',body:JSON.stringify({email,turnstile})});setStatus(status,`If ${email} has an account, a reset link is on its way. It expires in one hour.`);}catch(error){setStatus(status,error.message,true);}finally{b.disabled=false;resetHuman('forgot');}};
 }
 if($('reset-form')){
  const token=location.hash.slice(1);history.replaceState(null,'','/reset');const form=$('reset-form'),status=form.querySelector('.login-status');
@@ -104,6 +137,7 @@ if($('account-email')){
   $('account-storage').textContent=`${formatSize(me.usedBytes)} of ${formatSize(me.quotaBytes)} used`;$('account-storage-bar').value=Math.min(100,me.usedBytes/me.quotaBytes*100);
   $('current-password').closest('form').querySelector('[for=current-password]').hidden=$('current-password').hidden=!me.hasPassword;
   $('delete-password').hidden=document.querySelector('[for=delete-password]').hidden=!me.hasPassword;
+  $('password-heading').textContent=me.hasPassword?'Password':'Set a password';$('password-form').querySelector('button[type=submit]').textContent=me.hasPassword?'Change password':'Set password';
   const list=$('account-devices');list.replaceChildren();
   if(!me.devices.length)list.append(el('li','No computers connected yet.','subtle'));
   for(const d of me.devices){const li=el('li');li.append(el('span',d.name),el('span',`Connected ${formatDate(d.createdAt)}`,'subtle'));const b=el('button','Disconnect','quiet');b.type='button';
@@ -112,7 +146,7 @@ if($('account-email')){
  load();
  $('password-form').onsubmit=async e=>{e.preventDefault();const form=e.target,status=form.querySelector('.login-status'),password=$('new-password').value;
   if(password.length<10){setStatus(status,'Use at least 10 characters.',true);return;}
-  try{await api('/api/account/password',{method:'POST',body:JSON.stringify({current:$('current-password').value,password})});form.reset();setStatus(status,'Password changed. Other browsers were signed out.');load();}catch(error){setStatus(status,error.message,true);}};
+  try{await api('/api/account/password',{method:'POST',body:JSON.stringify({current:$('current-password').value,password})});const first=$('current-password').hidden;form.reset();setStatus(status,first?'Password set.':'Password changed. Other browsers were signed out.');load();}catch(error){setStatus(status,error.message,true);}};
  $('delete-form').onsubmit=async e=>{e.preventDefault();const status=e.target.querySelector('.login-status');
   if(!confirm('Delete your account and every video you shared? This cannot be undone.'))return;
   try{await api('/api/account/delete',{method:'POST',body:JSON.stringify({password:$('delete-password').value})});location.replace('/');}catch(error){setStatus(status,error.message,true);}};
@@ -145,6 +179,7 @@ if($('report-open')){
   catch(error){setStatus(status,error.message,true);b.disabled=false;}};
 }
 let videos=[];
+function closeAllMenus(){document.querySelectorAll('.card-more').forEach(m=>m.closeMenu?.());}
 function drawLibrary(){
  const grid=$('video-grid');grid.replaceChildren();const query=$('search').value.toLowerCase(),shown=$('visibility-filter').value;const matches=videos.filter(v=>v.title.toLowerCase().includes(query)&&(shown==='all'||v.visibility===shown));$('video-count').textContent=`${videos.length} ${videos.length===1?'video':'videos'}`;
  for(const v of matches){
@@ -152,7 +187,9 @@ function drawLibrary(){
   if(v.status==='ready'){
    const link=el('a',undefined,'thumbnail');link.href=new URL(v.url).pathname;link.setAttribute('aria-label','Watch '+v.title);const preview=el(v.thumbnailReady?'img':'video');if(v.thumbnailReady){preview.src=new URL(v.posterUrl).pathname;preview.alt='';preview.loading='lazy';}else{preview.src=new URL(v.url).pathname.replace('/v/','/media/');preview.addEventListener('loadedmetadata',()=>{preview.currentTime=Math.min(.1,preview.duration/2);},{once:true});preview.preload='metadata';preview.muted=true;preview.playsInline=true;}link.append(preview,el('span',clock(v.duration),'duration'));if(v.visibility==='private')link.append(el('span','Private','badge'));card.append(link);
   }else card.append(el('div','Upload unfinished. Resume from the same file in VidCapture.','uploading-card'));
-  card.append(el('h2',v.title),el('div',`${v.visibility==='private'?'Private':'Public'} · ${formatDate(v.createdAt)} · ${v.views} ${v.views===1?'play':'plays'}${v.comments?` · ${v.comments} ${v.comments===1?'comment':'comments'}`:''}`,'card-meta'));
+  const heading=el('h2');if(v.url){const a=el('a',v.title);a.href=new URL(v.url).pathname;heading.append(a);}else heading.textContent=v.title;
+  const counts=[`${v.views} ${v.views===1?'play':'plays'}`,...(v.comments?[`${v.comments} ${v.comments===1?'comment':'comments'}`]:[])].join(', ');
+  card.append(heading,el('div',`${formatDate(v.createdAt)} · ${counts}`,'card-meta'));
   const actions=el('div',undefined,'card-actions');
   if(v.url){
    // One Copy link: email editors paste the GIF card, Slack and LinkedIn paste the URL and unfurl it.
@@ -160,16 +197,26 @@ function drawLibrary(){
   }
   const more=el('div',undefined,'card-more'),moreButton=el('button','More','more-button'),menu=el('div',undefined,'card-menu');
   moreButton.setAttribute('aria-haspopup','true');moreButton.setAttribute('aria-expanded','false');menu.hidden=true;
-  const closeMenu=()=>{menu.hidden=true;moreButton.setAttribute('aria-expanded','false');};
-  moreButton.onclick=event=>{event.stopPropagation();const open=menu.hidden;document.querySelectorAll('.card-menu').forEach(m=>m.hidden=true);document.querySelectorAll('.more-button').forEach(b=>b.setAttribute('aria-expanded','false'));menu.hidden=!open;moreButton.setAttribute('aria-expanded',String(open));if(open)menu.querySelector('button').focus();};
+  const remove=el('button','Remove','remove');remove.title='The link stops working. Your recording on your computer is kept.';
+  const closeMenu=()=>{menu.hidden=true;moreButton.setAttribute('aria-expanded','false');delete remove.dataset.armed;remove.textContent='Remove';};more.closeMenu=closeMenu;
+  moreButton.onclick=event=>{event.stopPropagation();const open=menu.hidden;closeAllMenus();menu.hidden=!open;moreButton.setAttribute('aria-expanded',String(open));if(open)menu.querySelector('button').focus();};
   menu.onkeydown=event=>{if(event.key==='Escape'){closeMenu();moreButton.focus();}};
   const makePrivate=v.visibility==='public',toggle=el('button',makePrivate?'Make private':'Make public');
   toggle.onclick=async()=>{closeMenu();try{const updated=await api('/api/admin/videos/'+v.id,{method:'PATCH',body:JSON.stringify({visibility:makePrivate?'private':'public'})});v.visibility=updated.visibility;drawLibrary();toast(makePrivate?'Video is private. Its link only works for you.':'Video is public. Anyone with the link can watch.');}catch(e){toast(e.message);}};
-  const rename=el('button','Rename');rename.onclick=async()=>{closeMenu();const title=prompt('Video title',v.title);if(!title?.trim()||title===v.title)return;try{await api('/api/admin/videos/'+v.id,{method:'PATCH',body:JSON.stringify({title:title.trim()})});await loadLibrary();}catch(e){toast(e.message);}};
-  const remove=el('button','Remove','remove');remove.onclick=async()=>{closeMenu();if(!confirm(`Remove “${v.title}” from VidCapture? Its share link will stop working. Your local recording stays on your computer.`))return;try{await api('/api/admin/videos/'+v.id,{method:'DELETE'});await loadLibrary();toast('Video removed. Its link no longer works.');}catch(e){toast(e.message);}};
+  const rename=el('button','Rename');rename.onclick=()=>{closeMenu();
+   const input=el('input',undefined,'rename-input');input.value=v.title;input.maxLength=160;input.setAttribute('aria-label','Video title');heading.replaceChildren(input);input.focus();input.select();
+   const error=el('p',undefined,'rename-error');error.setAttribute('role','alert');error.hidden=true;heading.after(error);
+   let busy=false,failed=false,closed=false;
+   const close=()=>{if(closed)return;closed=true;drawLibrary();};
+   const finish=async save=>{if(busy||closed)return;const title=input.value.trim();if(!save||!title||title===v.title){close();return;}
+    busy=true;input.disabled=true;error.hidden=true;
+    try{const u=await api('/api/admin/videos/'+v.id,{method:'PATCH',body:JSON.stringify({title})});v.title=u.title;close();toast('Renamed.');}
+    catch(e){failed=true;busy=false;input.disabled=false;input.setAttribute('aria-invalid','true');error.textContent=`${e.message} Press Enter to try again or Escape to cancel.`;error.hidden=false;input.focus();}};
+   input.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();finish(true);}else if(e.key==='Escape'){e.preventDefault();finish(false);}};input.onblur=()=>{if(!failed)finish(true);};};
+  remove.onclick=async event=>{event.stopPropagation();if(!remove.dataset.armed){remove.dataset.armed='1';remove.textContent='Remove for everyone';return;}closeMenu();try{await api('/api/admin/videos/'+v.id,{method:'DELETE'});await loadLibrary();toast('Video removed. Its link no longer works.');}catch(e){toast(e.message);}};
   menu.append(toggle,rename,remove);more.append(moreButton,menu);actions.append(more);card.append(actions);grid.append(card);
  }
- document.onclick=event=>{if(!event.target.closest('.card-more'))document.querySelectorAll('.card-menu').forEach(m=>m.hidden=true);};
+ document.onclick=event=>{if(!event.target.closest('.card-more'))closeAllMenus();};
  if(!matches.length&&videos.length)grid.append(el('p',query?'No videos match your search.':`No ${shown} videos yet.`,'subtle'));
 }
 let filling=false;
@@ -182,11 +229,11 @@ async function fillPreviews(){
 }
 async function loadLibrary(){
  try{
-  const data=await api('/api/admin/videos');videos=data.videos;$('logout').hidden=false;
+  const data=await api('/api/admin/videos');videos=data.videos;
   if(data.quotaBytes){$('storage-meter').hidden=false;$('storage-meter').textContent=`${formatSize(data.usedBytes)} of ${formatSize(data.quotaBytes)} used`;}
   if(data.verified===false){$('verify-banner').hidden=false;api('/api/me').then(me=>$('verify-email').textContent=me.email).catch(()=>{});}$('upload-label').hidden=false;$('library-tools').hidden=!videos.length;
   $('library-message').hidden=!!videos.length;
-  if(!videos.length){$('library-message').replaceChildren(el('h2','Your next video starts here.'),el('p','Share a recording from VidCapture, or upload an MP4 here. Only videos you choose to publish appear in this library.'));}
+  if(!videos.length){const get=el('a','Get the desktop app','button');get.href='/#install';const up=el('label','Upload an MP4','quiet');up.htmlFor='upload';up.tabIndex=0;up.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();$('upload').click();}};const row=el('div',undefined,'empty-actions');row.append(get,up);$('library-message').replaceChildren(el('h2','No videos yet'),el('p','Press Share in VidCapture and your video shows up here.'),row);}
   drawLibrary();fillPreviews();
  }catch(error){
   $('library-message').hidden=false;$('library-message').replaceChildren(el('h2',error.status===401?'Your library is private.':'Unable to load your library.'),el('p',error.status===401?'Log in to see your videos.':error.message));if(error.status===401){const link=el('a','Log in','button');link.href='/login';$('library-message').append(link);}
@@ -194,7 +241,7 @@ async function loadLibrary(){
 }
 if($('video-grid')){
  loadLibrary();$('search').oninput=drawLibrary;$('visibility-filter').onchange=drawLibrary;
- $('logout').onclick=logout;$('verify-resend').onclick=()=>resendVerify($('verify-resend'));
+$('verify-resend').onclick=()=>resendVerify($('verify-resend'));
  let uploadController=null;
  $('cancel-upload').onclick=()=>uploadController?.abort();
  $('upload').onchange=async()=>{
@@ -225,3 +272,13 @@ if($('video-grid')){
   finally{uploadController=null;$('upload-progress').hidden=true;$('upload').value='';$('upload-label').hidden=false;await loadLibrary();}
  };
 }
+
+// Owner on their own watch page: switch between public and private in place.
+{const b=$('visibility-toggle');if(b)b.onclick=async()=>{const next=b.dataset.visibility==='private'?'public':'private';b.disabled=true;try{await api('/api/admin/videos/'+b.dataset.video,{method:'PATCH',body:JSON.stringify({visibility:next})});location.reload();}catch(error){b.disabled=false;toast(error.message);}};}
+// Homepage demo: swap the preview for the player only when someone presses play.
+if($('demo-start'))$('demo-start').onclick=async()=>{
+ const frame=$('demo-frame');frame.replaceChildren($('demo-player').content.cloneNode(true));
+ const load=src=>new Promise((resolve,reject)=>{const s=document.createElement('script');s.src=src;s.onload=resolve;s.onerror=reject;document.body.append(s);});
+ try{await Promise.all([load('/player.js'),$('transcript')?load('/transcript.js'):null]);}catch{toast('The demo could not load. Reload the page and try again.');return;}
+ $('video-player')?.focus({preventScroll:true});$('watch-video')?.play().catch(()=>{});
+};

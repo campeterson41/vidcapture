@@ -15,3 +15,13 @@ export async function readJson(request:Request):Promise<Record<string,unknown>>{
  try{const parsed=JSON.parse(new TextDecoder().decode(data));if(!parsed||Array.isArray(parsed)||typeof parsed!=='object')throw 0;return parsed;}catch{throw new HttpError(400,'Invalid JSON.');}
 }
 export const formatBytes=(n:number)=>n>=1024**3?`${(n/1024**3).toFixed(n>=10*1024**3?0:1)} GB`:`${Math.max(0,Math.round(n/1024**2))} MB`;
+
+// Settings a deployment may leave out: secrets and optional bindings. `wrangler types` only
+// knows the ones a given wrangler.jsonc configures, so they are read through this type.
+export type OptionalEnv = {
+ TURNSTILE_SECRET?:string; TURNSTILE_ALLOW_TESTING?:string;
+ NOTIFY?:SendEmail; NOTIFY_TO?:string; NOTIFY_FROM?:string;
+ EMAIL_FROM?:string; SES_ACCESS_KEY_ID?:string; SES_SECRET_ACCESS_KEY?:string; SES_REGION?:string;
+ DEMO_SHARE?:string;
+};
+export const optional=(env:Env)=>env as unknown as OptionalEnv;
