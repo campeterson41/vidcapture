@@ -1,6 +1,6 @@
 // Enable only after the exact versioned ZIP and checksum are published and verified.
 export const extensionRelease = {
- version: '0.3.0', tag: 'v0.1.0-alpha.7', filename: 'vidcapture-extension-v0.3.0.zip', available: false,
+ version: '0.3.0', tag: 'v0.1.0-alpha.7', filename: 'vidcapture-extension-v0.3.0.zip', available: true,
 };
 const repo='https://github.com/campeterson41/vidcapture';
 const escape=(s:string)=>s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
