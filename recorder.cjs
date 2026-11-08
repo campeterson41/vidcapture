@@ -13,6 +13,7 @@ const {cameraMode,cameraRecordMode,cameraShader,cameraCommand}=require('./camera
 const {cameraKey}=require('./camera-settings.cjs');
 const {publicProfile}=require('./camera-profiles.cjs');
 const {selectedWindow,windowTarget,matchingWindow,containingMonitor,physicalRegion}=require('./tracking.cjs');
+const {SourceGuard,createPactl,takePlan,faultMessage,withoutSaved,pinEnv,muteTakeMic}=require('./source-guard.cjs');
 const run = promisify(execFile);
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const ACTIVE = new Set(['selecting','starting','recording','paused','stopping']);
@@ -54,8 +55,10 @@ function parseRegion(text) {
 }
 
 // clean is the live cleanup source (audio-chain.cjs) when it is on; the raw
-// microphone is then added as a final backup track if micBackup is set.
-function buildArgs(target, settings, output, clean=null) {
+// microphone is then added as a final backup track if micBackup is set. micName is
+// the take's resolved microphone source: Default is resolved once when a take starts,
+// so losing it can never hand the take to whichever input becomes the default next.
+function buildArgs(target, settings, output, clean=null, micName=null) {
   let args;
   if(target.kind==='camera'){
     // Camera only: GPU Screen Recorder reads the camera itself, full frame.
@@ -70,7 +73,7 @@ function buildArgs(target, settings, output, clean=null) {
   args.push('-fm','vfr','-q',settings.quality,'-fallback-cpu-encoding','yes','-o',output);
   const audio=[];
   if(settings.systemAudio) audio.push('default_output');
-  const raw=settings.microphone==='default_input'?'default_input':`device:${settings.microphone}`;
+  const raw=micName?`device:${micName}`:settings.microphone==='default_input'?'default_input':`device:${settings.microphone}`;
   const mic=clean?`device:${clean}`:raw;
   if(settings.microphone!=='none') audio.push(mic);
   if(audio.length) args.push('-a',audio.join('|'),'-ac','aac');
@@ -79,6 +82,8 @@ function buildArgs(target, settings, output, clean=null) {
   if(clean&&settings.microphone!=='none'&&settings.micBackup)args.push('-a',raw);
   return args;
 }
+
+const faultInfo=f=>({reason:f.fault,source:f.source||null,to:f.to||null,at:new Date(f.at||Date.now()).toISOString()});
 
 function cameraGeometry(target, size, corner, placement=null) {
   const margin=16;
@@ -102,6 +107,18 @@ class Recorder extends EventEmitter {
     this.state={phase:'idle',elapsed:0,target:null,settings:{...DEFAULTS},devices:{microphones:[],cameras:[],monitors:[]},outputDir:this.outputDir,recent:[],lastFile:null,error:null,micCleanupError:null,cameraPreview:false};
     this.child=null;this.camera=null;this.started=0;this.pausedAt=0;this.pauseTotal=0;this.rawFile=null;this.log='';this.finalizing=null;
     this.beforePick=options.beforePick||(()=>{});this.afterPick=options.afterPick||(()=>{});
+    // The microphone route guard (source-guard.cjs). Its PipeWire query, timing and
+    // the default-input lookup can be replaced in tests.
+    this.sourceGuard=null;this.faulting=null;this.interrupted=null;this.micFaultInfo=null;
+    this.followEngine=options.followEngine||null;
+    this.guardQuery=options.guardQuery||undefined;this.guardTiming=options.guardTiming||{};
+    // A faulted take whose microphone is confirmed muted gets faultStopMs to save
+    // normally; one that cannot be confirmed gets only faultUnsafeMs before it is killed.
+    this.faultStopMs=options.faultStopMs??10000;this.faultUnsafeMs=options.faultUnsafeMs??1500;this.faultKillMs=options.faultKillMs??3000;
+    this.defaultSource=options.defaultSource||(async()=>(await run('pactl',['get-default-source'],{timeout:4000})).stdout.trim());
+    // pactl probes the recorder owns for ending a faulted take (killed and reaped after).
+    this.pactl=options.pactl||createPactl();
+    this.muteStream=options.muteStream||(index=>this.pactl.mute(index,this.guardTiming.queryMs));
     this.cameraPlacement=null;this.lastCameraGeometry=null;
     this.followSequence=0;this.followFile=path.join(this.dataDir,'follow-state');
     this.followTimer=setInterval(()=>{if(this.state.target?.kind==='window')this.updateWindow().catch(e=>this.set({error:e.message}));else if(this.camera&&!this.cameraUpdate)this.cameraUpdate=this.positionCamera(false).catch(e=>this.set({error:e.message})).finally(()=>{this.cameraUpdate=null;});},30);this.followTimer.unref();
@@ -113,7 +130,7 @@ class Recorder extends EventEmitter {
   }
   publish() {this.emit('state',this.snapshot());return this.snapshot();}
   set(data) {Object.assign(this.state,data);return this.publish();}
-  idleOnly() {if(ACTIVE.has(this.state.phase)) throw new Error('Stop and save this recording before changing its settings.');if(this.state.job?.running)throw new Error('Wait for processing to finish, or cancel it first.');}
+  idleOnly() {if(ACTIVE.has(this.state.phase)) throw new Error('Stop and save this recording before changing its settings.');if(this.child&&this.child.exitCode===null&&!this.child.signalCode)throw new Error(`The previous recorder (process ${this.child.pid}) has not exited yet. Wait for it to stop.`);if(this.state.job?.running)throw new Error('Wait for processing to finish, or cancel it first.');}
   async init() {
     await fs.mkdir(this.dataDir,{recursive:true,mode:0o700});
     if(!this.fixedOutput){
@@ -507,8 +524,17 @@ class Recorder extends EventEmitter {
   async closeCamera() {
     const camera=this.camera;this.camera=null;this.cameraAddress=null;this.lastCameraGeometry=null;this.state.cameraPreview=false;
     if(camera && camera.exitCode===null && !camera.signalCode){
+      // Timestamps in recorder.log show whether the camera closed after the take ended.
+      this.log+=`VidCapture: camera close requested at ${new Date().toISOString()}\n`;
+      camera.once('exit',(code,signal)=>{this.log+=`VidCapture: camera exited code=${code} signal=${signal} at ${new Date().toISOString()}\n`;});
       const exited=new Promise(resolve=>camera.once('exit',resolve));
-      await new Promise(resolve=>{
+      // Fed directly by the transport, MPV decodes with VA-API and scales with
+      // scale_vaapi, but only reads a pipe and never opens the camera. Its quit
+      // path has faulted while tearing down those filters, so end it at once; the
+      // transport still stops normally below. The effects path (RGB frames, no
+      // VA-API filters) and a preview that reads the camera itself still quit.
+      if(camera.transport&&!camera.effects){camera.kill('SIGKILL');await Promise.race([exited,delay(1000)]);}
+      else await new Promise(resolve=>{
         const socket=net.createConnection(camera.controlSocket);
         socket.setTimeout(300);
         const done=()=>{socket.destroy();resolve();};
@@ -517,7 +543,7 @@ class Recorder extends EventEmitter {
       });
       // Quit through MPV so its filters release camera frames before teardown.
       // This preview writes no media; a stuck child can be terminated directly.
-      await Promise.race([exited,delay(2000)]);
+      if(camera.exitCode===null&&!camera.signalCode)await Promise.race([exited,delay(2000)]);
       if(camera.exitCode===null&&!camera.signalCode){camera.kill('SIGKILL');await Promise.race([exited,delay(1000)]);}
     }
     const effects=camera?.effects;
@@ -576,37 +602,89 @@ class Recorder extends EventEmitter {
       let engine='gpu-screen-recorder';
       const env={...process.env};
       if(target.kind==='window'){
-        engine=path.join(__dirname,'.local/bin/gpu-screen-recorder-follow');
+        engine=this.followEngine||path.join(__dirname,'.local/bin/gpu-screen-recorder-follow');
         try{await fs.access(engine);}catch{throw new Error('Window recording is unavailable. Reinstall VidCapture to restore it.');}
         this.followMonitor=containingMonitor(this.state.devices.monitors,target)?.id;
         await this.writeFollowState(target);env.CAPTURE_FOLLOW_STATE=this.followFile;
       }
+      // The take's microphone, as one source. Default means the default input as it
+      // is now; the take keeps that source and never follows a later default.
+      const mic=this.state.settings.microphone;
+      const micName=mic==='none'?null:mic==='default_input'?await this.resolveDefaultMic():mic;
       // Live microphone cleanup, if on. A failure stops the start so a take never
       // silently records without the cleanup that was chosen.
       const clean=this.audioChain?await this.audioChain.ensure(this.state.settings):null;
       if(this.state.micCleanupError)this.state.micCleanupError=null;
-      this.takeAudio={clean:!!clean,backup:!!(clean&&this.state.settings.microphone!=='none'&&this.state.settings.micBackup)};
-      const child=spawn(engine,buildArgs(recordTarget,this.state.settings,this.rawFile,clean),{stdio:['ignore','ignore','pipe'],env});
-      this.child=child;
+      if(clean&&this.audioChain.mic&&this.audioChain.mic!==micName)throw new Error('The default microphone changed while the recording was starting. Try again.');
+      // micSource: the source the take's microphone track reads, for the controls'
+      // indicator. null with no microphone.
+      this.takeAudio={clean:!!clean,backup:!!(clean&&mic!=='none'&&this.state.settings.micBackup),micSource:mic==='none'?null:clean?clean:micName};
+      // Every microphone take is held to its route: the recorder's streams refuse a
+      // fallback (node.dont-fallback), and the guard ends the take if the route is lost.
+      const plan=takePlan({settings:this.state.settings,mic:micName,clean,chainPid:clean?this.audioChain.child?.pid:null});
+      this.micFaultInfo=null;this.interrupted=null;
+      const child=spawn(engine,buildArgs(recordTarget,this.state.settings,this.rawFile,clean,micName),{stdio:['ignore','ignore','pipe'],env:plan?pinEnv(env):env});
+      this.child=child;this.startingChild=child;
       child.stderr.on('data',b=>{this.log=(this.log+b).slice(-32000);});
-      this.exitPromise=new Promise(resolve=>{child.once('error',e=>{this.log+=e.message;resolve({code:1});});child.once('exit',(code,signal)=>resolve({code,signal}));});
+      this.exitPromise=new Promise(resolve=>{child.once('error',e=>{this.log+=e.message;resolve({code:1});});child.once('exit',(code,signal)=>{this.log+=`\nVidCapture: recorder exited code=${code} signal=${signal} at ${new Date().toISOString()}\n`;resolve({code,signal});});});
       this.exitPromise.then(async result=>{
-        if(['recording','paused'].includes(this.state.phase)) await this.finish(result.code===0?null:'Recording stopped unexpectedly. Any recoverable footage has been kept.');
+        // Only this take's own recorder can end this take: a late exit of an earlier
+        // recorder never finalizes a newer one.
+        if(this.child===child&&['recording','paused'].includes(this.state.phase)) await this.finish(result.code===0?null:'Recording stopped unexpectedly. Any recoverable footage has been kept.');
       }).catch(e=>this.set({phase:'error',error:e.message}));
+      if(plan&&child.pid){
+        const guard=new SourceGuard({plan,pid:child.pid,query:this.guardQuery,timing:this.guardTiming,onFault:f=>this.micFault(f,child,guard)});
+        this.sourceGuard=guard;guard.start();
+      }
+      // A route fault while starting ends this take at once (micFault); startup then
+      // stops at its next step and reports that ending instead of going live.
+      const faulted=()=>this.faultedChild===child;
       let ready=false;
       for(let i=0;i<80;i++) {
+        if(faulted())break;
         if(child.exitCode!==null||child.signalCode)throw new Error('Recording could not start. '+this.log.trim().split('\n').slice(-3).join(' ').slice(-350));
         // The muxer buffers small MKV writes. FPS diagnostics prove capture started
         // even when the first disk buffer has not been flushed yet.
         try {if((await fs.stat(this.rawFile)).size>0 || /update fps: [1-9]/.test(this.log)){ready=true;break;}}catch{}
         await delay(100);
       }
-      if(!ready)throw new Error('The recorder did not start writing a file.');
-      this.started=Date.now();
-      await fs.writeFile(path.join(this.dataDir,'active.json'),JSON.stringify({pid:child.pid,file:this.rawFile,started:this.started}),{mode:0o600});
-      return this.set({phase:'recording'});
+      if(!faulted()){
+        if(!ready)throw new Error('The recorder did not start writing a file.');
+        this.started=Date.now();
+        await fs.writeFile(path.join(this.dataDir,'active.json'),JSON.stringify({pid:child.pid,file:this.rawFile,started:this.started}),{mode:0o600});
+        // Nothing is awaited between this check and going live.
+        if(!faulted())return this.set({phase:'recording'});
+      }
+      throw Object.assign(new Error('fault'),{routeFault:true});
     }catch(e){
-      if(this.child&&this.child.exitCode===null&&!this.child.signalCode){this.child.kill('SIGINT');await Promise.race([this.exitPromise,delay(5000)]);}
+      // A route fault owns this take's ending (containment, stop, save); startup only
+      // waits for it, removes the metadata it may have written after cleanup, and
+      // reports the outcome.
+      if(e.routeFault||(this.faultedChild&&this.faultedChild===this.startingChild)){
+        const ending=this.faulting;
+        if(ending)await ending.catch(()=>{});
+        if(this.state.phase!=='error'||!this.child)await fs.rm(path.join(this.dataDir,'active.json'),{force:true});
+        throw new Error(this.state.error||faultMessage({fault:this.micFaultInfo.reason}));
+      }
+      this.stopSourceGuard();
+      const live=()=>this.child&&this.child.exitCode===null&&!this.child.signalCode;
+      if(live()){
+        this.interrupted=this.child;this.child.kill('SIGINT');await Promise.race([this.exitPromise,delay(this.startStopMs??5000)]);
+        if(live()){try{this.child.kill('SIGKILL');}catch{}await Promise.race([this.exitPromise,delay(this.faultKillMs)]);}
+      }
+      if(live()){
+        // Still running after SIGKILL: keep the process and its file accounted for.
+        // New takes and settings wait (idleOnly) until it exits; then it is let go.
+        const survivor=this.child,file=this.rawFile;
+        this.exitPromise.then(async()=>{
+          if(this.child!==survivor)return;
+          this.child=null;if(this.rawFile===file)this.rawFile=null;this.followMonitor=null;
+          await this.closeCamera().catch(()=>{});await this.refreshRecent().catch(()=>{});
+          if(this.state.phase==='error')this.set({error:`${e.message} The recorder has now exited.`});
+        }).catch(()=>{});
+        await this.writeLog().catch(()=>{});
+        this.set({phase:'error',error:`${e.message} The recorder (process ${this.child.pid}) has not exited, so its file is still open.`});throw e;
+      }
       this.followMonitor=null;await this.closeCamera();await this.writeLog();this.rawFile=null;await this.refreshRecent();this.set({phase:'error',error:e.message});throw e;
     }
   }
@@ -617,10 +695,21 @@ class Recorder extends EventEmitter {
     return this.snapshot();
   }
   async stop() {
+    // A take the guard is ending is already being stopped and saved.
+    if(this.faulting)return this.faulting;
     if(!['recording','paused'].includes(this.state.phase)||!this.child)throw new Error('There is no recording to stop.');
-    this.set({phase:'stopping'});this.child.kill('SIGINT');
-    const result=await Promise.race([this.exitPromise,delay(30000).then(()=>null)]);
-    if(!result){this.set({phase:this.pausedAt?'paused':'recording',error:'The recorder is taking longer to stop. Your file is preserved. Try Stop again.'});throw new Error(this.state.error);}
+    const child=this.child;
+    this.set({phase:'stopping'});this.interrupted=child;child.kill('SIGINT');
+    // A route fault during this stop takes over at once (see micFault); this stop then
+    // waits for that ending instead of its own timeout, so the take is saved once.
+    let fault=null;
+    let timer;
+    const result=await Promise.race([this.exitPromise,new Promise(r=>{timer=setTimeout(()=>r(null),this.stopMs??30000);}),new Promise(r=>{this.onFaultBegin=r;}).then(box=>{fault=box.ending;return null;})]);
+    clearTimeout(timer);this.onFaultBegin=null;
+    if(fault||this.faulting)return fault||this.faulting;
+    if(!result){
+      this.set({phase:this.pausedAt?'paused':'recording',error:'The recorder is taking longer to stop. Your file is preserved. Try Stop again.'});throw new Error(this.state.error);
+    }
     return this.finish(result.code===0?null:'The recorder ended with an error. Your footage has been kept.');
   }
   // Ends the take and deletes its file. Only this take's own recording is
@@ -628,6 +717,7 @@ class Recorder extends EventEmitter {
   async discard() {
     if(!['recording','paused'].includes(this.state.phase)||!this.child)throw new Error('There is no recording to discard.');
     const raw=this.rawFile;
+    this.stopSourceGuard();
     this.set({phase:'stopping'});
     this.child.kill('SIGINT');
     let result=await Promise.race([this.exitPromise,delay(10000).then(()=>null)]);
@@ -642,12 +732,110 @@ class Recorder extends EventEmitter {
     await this.refreshRecent();
     return this.set({phase:'idle',elapsed:0,lastFile:null,error:null,cameraPreview:false});
   }
+  // The default input as one microphone source, for a take set to Default.
+  async resolveDefaultMic(){
+    let name='';
+    try{name=String(await this.defaultSource()||'').trim();}catch{}
+    if(!name||name.endsWith('.monitor')||name==='vidcapture_mic')throw new Error('There is no default microphone. Choose a microphone first.');
+    return name;
+  }
+  stopSourceGuard(){const g=this.sourceGuard;this.sourceGuard=null;g?.stop();}
+  // Called by the guard of one take. A guard that no longer belongs to the current
+  // take (an earlier take, or a take already ending) changes nothing.
+  micFault(f,child,guard){
+    if(this.sourceGuard!==guard||this.child!==child)return null;
+    this.sourceGuard=null;
+    this.log=(this.log+`\n[microphone route] ${JSON.stringify(f)}\n`).slice(-32000);
+    // Starting, recording, paused, or in an ordinary Stop (the guard runs until saving starts, and
+    // discard stops it first): containment starts now, and a Stop in progress joins it.
+    if(!['starting','recording','paused','stopping'].includes(this.state.phase))return null;
+    return this.beginFault(f,child);
+  }
+  beginFault(f,child){
+    if(this.faulting)return this.faulting;
+    this.faultedChild=child;
+    this.micFaultInfo=faultInfo(f);
+    // The ending's own failure (saving, writing the log) is handled here: the take
+    // leaves stopping with the reason and the failure, and keeps its file and process.
+    this.faulting=this.endFaultedTake(f,child).catch(e=>{
+      const message=faultMessage(f,this.micFaultInfo?.uncertain?'unconfirmed':null);
+      this.log+=`\n[microphone route] ending the take failed: ${e?.message||e}\n`;
+      return this.set({phase:'error',error:`${withoutSaved(message)} Saving the recording failed: ${e?.message||e}${this.rawFile?' The original file was kept.':''}`});
+    }).finally(()=>{this.faulting=null;});
+    this.onFaultBegin?.({ending:this.faulting});
+    return this.faulting;
+  }
+  // Ends the take, with a wall-clock bound. The recorder is asked to stop and save at
+  // once, and its microphone streams are muted (the supported pactl operation) and
+  // confirmed by asking PipeWire again, in rounds that repeat while it saves, so a
+  // stream it reopens elsewhere is muted too. Until a round confirms the mute, the
+  // recorder has faultUnsafeMs from the fault being handled before it is killed; a
+  // confirmed take gets faultStopMs to save. The deadline is enforced on its own
+  // timer, never behind a probe. Any earlier unconfirmed time is kept in the take's
+  // record and its message. A recorder still running after the kill is reported with
+  // its process id and file, never returned to recording.
+  async endFaultedTake(f,child){
+    const begun=Date.now();
+    this.set({phase:'stopping'});
+    let exited=null;this.exitPromise.then(r=>{exited=r;},()=>{exited={code:1};});
+    if(this.interrupted!==child){this.interrupted=child;try{child.kill('SIGINT');}catch{}}
+    const interval=this.guardTiming.intervalMs??250;
+    const query=this.guardQuery||this.pactl;
+    let deadline=begun+this.faultUnsafeMs,safeAt=null,unsafeSince=begun,unsafeMs=0,uncertain=false,last=null,done=false;
+    const containment=(async()=>{
+      while(!done&&!exited){
+        const c=await muteTakeMic({pid:child.pid,query,mute:this.muteStream,queryMs:this.guardTiming.queryMs,cancelled:()=>done||!!exited});
+        if(done||exited||c.state==='cancelled')break;
+        last=c.state;
+        const now=Date.now();
+        if(c.state==='unconfirmed'){
+          uncertain=true;
+          if(safeAt){safeAt=null;unsafeSince=now;deadline=Math.min(deadline,now+this.faultUnsafeMs);}
+        }else if(!safeAt){
+          safeAt=now;unsafeMs+=now-unsafeSince;unsafeSince=null;
+          deadline=begun+this.faultStopMs;
+        }
+        await delay(interval);
+      }
+    })().catch(()=>{});
+    // The wait itself: exit, or the deadline as it stands (checked every 10 ms).
+    while(!exited&&Date.now()<deadline)await Promise.race([this.exitPromise.catch(()=>{}),delay(Math.max(1,Math.min(10,deadline-Date.now())))]);
+    let killed=false,killAt=null;
+    if(!exited){
+      killAt=Date.now();
+      this.log+=`\n[microphone route] recorder ${child.pid} did not stop in time (microphone ${safeAt?'muted':'not confirmed muted'}); killing it\n`;
+      try{child.kill('SIGKILL');killed=true;}catch{}
+      await Promise.race([this.exitPromise.catch(()=>{}),delay(this.faultKillMs)]);
+    }
+    // Stop the containment rounds first, so nothing new is started; then kill and reap
+    // what is still running, wait (bounded) for the last round to settle, and drain
+    // once more for anything it had already launched.
+    done=true;
+    const endAt=Date.now();
+    if(unsafeSince!==null)unsafeMs+=endAt-unsafeSince;
+    if(!safeAt)uncertain=true;
+    await query.drain?.(500).catch(()=>null);
+    const settled=await Promise.race([containment.then(()=>true),delay(500).then(()=>false)]);
+    const probes=await query.drain?.(500).catch(()=>null);
+    if(!settled)this.log+='\n[microphone route] a containment round had not settled after its probes were killed\n';
+    this.micFaultInfo={...this.micFaultInfo,cut:safeAt?'muted':(last||'unconfirmed'),uncertain,unconfirmedMs:unsafeMs,
+      handledMs:begun-(f.at||begun),killAfterMs:killAt?killAt-begun:null,killed,endedMs:endAt-begun,...(probes?.unreaped?.length?{probesUnreaped:probes.unreaped}:{})};
+    const message=faultMessage(f,uncertain?'unconfirmed':null);
+    if(!exited){
+      await this.writeLog().catch(()=>{});
+      // When it does exit, its file is saved then, under the same reason.
+      this.exitPromise.then(()=>{if(this.child===child&&this.state.phase==='error')return this.finish(message);}).catch(e=>this.set({phase:'error',error:`${withoutSaved(message)} Saving the recording failed: ${e.message}`}));
+      return this.set({phase:'error',error:`${withoutSaved(message)} The recorder (process ${child.pid}) has not exited, so its file is still open.`});
+    }
+    return this.finish(message);
+  }
   async writeLog(){await fs.writeFile(path.join(this.dataDir,'recorder.log'),this.log,{mode:0o600});}
   async finish(warning=null) {
     if(this.finalizing)return this.finalizing;
     this.finalizing=this.finalize(warning).finally(()=>{this.finalizing=null;});return this.finalizing;
   }
   async finalize(warning) {
+    this.stopSourceGuard();
     this.set({phase:'stopping'});await this.closeCamera();await this.writeLog();
     const raw=this.rawFile;let saved=raw;let error=warning;
     try {
@@ -659,7 +847,11 @@ class Recorder extends EventEmitter {
       const {stdout:check}=await run('ffprobe',['-v','error','-show_entries','format=duration','-of','json',pending],{timeout:15000});
       if(Number(JSON.parse(check).format.duration)<Number(probe.format.duration)-1)throw new Error('MP4 conversion was incomplete. Original MKV retained.');
       await fs.rename(pending,mp4);saved=mp4;await fs.unlink(raw);
-    }catch(e){error=error||`The original recording was kept as MKV. ${e.message}`;}
+    }catch(e){
+      const kept=`The original recording was kept as MKV. ${e.message}`;
+      // A route fault's reason stays, but it no longer claims a saved recording.
+      error=error?(withoutSaved(error)!==error?`${withoutSaved(error)} ${kept}`:error):kept;
+    }
     this.child=null;this.rawFile=null;this.followMonitor=null;await fs.rm(path.join(this.dataDir,'active.json'),{force:true});await this.refreshRecent();
     const exists=this.state.recent.some(f=>f.path===saved);
     if(exists){
@@ -667,8 +859,10 @@ class Recorder extends EventEmitter {
       // screen and app give the title writer context when nothing is said.
       await fs.writeFile(path.join(this.dataDir,path.basename(saved)+'.json'),JSON.stringify({settings:s,micTrack:s.microphone==='none'?null:(s.systemAudio?1:0),systemTrack:s.systemAudio?(s.microphone==='none'?0:2):null,
         rawMicTrack:this.takeAudio?.backup?(s.systemAudio?3:1):null,micCleanup:this.takeAudio?.clean?{noise:s.micNoise,gate:s.micGate,rumble:s.micRumble}:null,
+        ...(this.micFaultInfo?{micStopped:this.micFaultInfo}:{}),
         recordedAt:new Date(this.started||Date.now()).toISOString(),...(t?.kind==='camera'?{source:'camera'}:{}),screen:t?.kind==='window'?(t.label||null):t?.kind==='monitor'?(t.label||null):null,app:t?.kind==='window'?(t.class||null):null}),{mode:0o600});
     }
+    if(!exists&&error&&withoutSaved(error)!==error)error=`${withoutSaved(error)} No recording was saved.`;
     return this.set({phase:exists?'saved':'error',lastFile:exists?saved:null,error:error||(!exists?'No recording was saved.':null),cameraPreview:false});
   }
   // Gives a recording a new name, moving every sidecar keyed by its file name
@@ -722,6 +916,6 @@ class Recorder extends EventEmitter {
     await this.refreshRecent();
     return this.set({outputDir:real,lastFile:null});
   }
-  async dispose(){this.disposed=true;clearInterval(this.followTimer);await this.unmarkWindow();clearInterval(this.timer);clearTimeout(this.deviceRefreshTimer);this.deviceWatcher?.close();await this.closeCamera();}
+  async dispose(){this.disposed=true;this.stopSourceGuard();await this.pactl.drain?.(500).catch(()=>{});clearInterval(this.followTimer);await this.unmarkWindow();clearInterval(this.timer);clearTimeout(this.deviceRefreshTimer);this.deviceWatcher?.close();await this.closeCamera();}
 }
 module.exports={Recorder,takeFile,validateSettings,parseRegion,buildArgs,cameraGeometry,isRecordingName,DEFAULTS,ACTIVE};

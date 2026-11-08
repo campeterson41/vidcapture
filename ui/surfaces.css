@@ -21,6 +21,7 @@
   --brand: #375b43;
   --pick: #a4c3b2;
   --pick-bright: #7ee8ac;
+  --warn: #e0a650;
   --dim: rgba(10, 10, 9, 0.5);
   --font: "Adwaita Sans", "Noto Sans", "Liberation Sans", system-ui, sans-serif;
   --mono: "Geist Mono", "Adwaita Mono", "JetBrainsMono Nerd Font", ui-monospace, monospace;
@@ -195,6 +196,21 @@ body.controls { display: grid; }
 .live-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--rec); flex: none; }
 body[data-phase="paused"] .live-dot { background: var(--faint); }
 .elapsed { font-size: 14px; }
+/* Microphone input indicator. A filled disc with a microphone glyph, so it never reads
+   as a second recording dot. The green fill grows with the measured input level. */
+.mic { position: relative; flex: none; display: grid; place-items: center; width: 26px; height: 26px; margin: 0 6px 0 2px; border-radius: 50%; background: var(--raised); color: var(--faint); -webkit-app-region: no-drag; }
+.mic-level { position: absolute; inset: 0; border-radius: 50%; background: var(--brand); transform: scale(var(--level, 0)); opacity: 0; transition: transform 90ms linear; }
+.mic-glyph { position: relative; width: 15px; height: 15px; }
+.mic-slash { position: absolute; width: 2px; height: 20px; border-radius: 1px; background: currentColor; transform: rotate(-45deg); display: none; }
+.mic[data-state="live"], .mic[data-state="quiet"] { color: var(--text); }
+.mic[data-state="live"] .mic-level { opacity: 1; }
+.mic[data-state="muted"], .mic[data-state="held"], .mic[data-state="unlinked"], .mic[data-state="cleanup"], .mic[data-state="unavailable"] { color: var(--warn); background: rgba(224, 166, 80, 0.16); }
+/* A warning mark, so a failure never differs from a quiet microphone by color alone. */
+.mic-alert { position: absolute; right: -2px; bottom: -2px; display: none; width: 11px; height: 11px; border-radius: 50%; background: var(--warn); color: var(--bar); font: 700 9px/11px var(--font); text-align: center; }
+.mic[data-state="held"] .mic-alert, .mic[data-state="unlinked"] .mic-alert, .mic[data-state="cleanup"] .mic-alert, .mic[data-state="unavailable"] .mic-alert { display: block; }
+.mic[data-state="muted"] .mic-slash, .mic[data-state="none"] .mic-slash { display: block; }
+@media (prefers-reduced-motion: reduce) { .mic-level { transition: none; } }
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .pill .icon-btn { width: 36px; height: 36px; border-radius: 18px; }
 .pill-main, .pill-confirm { display: flex; align-items: center; gap: 4px; flex: 1; height: 100%; min-width: 0; }
 .pill-confirm { padding-left: 10px; }

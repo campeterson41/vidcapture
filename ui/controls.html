@@ -17,11 +17,19 @@
     <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4v16l13 -8z"/></symbol>
     <symbol id="i-restart" viewBox="0 0 24 24"><path d="M19.95 11a8 8 0 1 0 -.5 4m.5 5v-5h-5"/></symbol>
     <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7l16 0"/><path d="M10 11l0 6"/><path d="M14 11l0 6"/><path d="M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2l1 -12"/><path d="M9 7v-3a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v3"/></symbol>
+    <symbol id="i-mic" viewBox="0 0 24 24"><path d="M9 5a3 3 0 0 1 6 0v5a3 3 0 0 1 -6 0z"/><path d="M5 10a7 7 0 0 0 14 0"/><path d="M8 21h8"/><path d="M12 17v4"/></symbol>
     <symbol id="i-stop" viewBox="0 0 24 24"><path d="M5 7a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v10a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2z"/></symbol>
   </svg>
   <div class="pill" id="pill" hidden>
     <div class="pill-main" id="pill-main">
       <div class="grip" title="Drag to move"><span class="live-dot" aria-hidden="true"></span><span class="elapsed mono" id="elapsed" role="timer" aria-label="Elapsed time">0:00</span></div>
+      <span class="mic" id="mic" role="img" data-state="checking" aria-label="Microphone: checking the recording input">
+        <span class="mic-level" aria-hidden="true"></span>
+        <svg class="icon mic-glyph" aria-hidden="true"><use href="#i-mic"/></svg>
+        <span class="mic-slash" aria-hidden="true"></span>
+        <span class="mic-alert" aria-hidden="true">!</span>
+      </span>
+      <span class="sr-only" id="mic-status" aria-live="polite"></span>
       <button type="button" class="icon-btn" id="restart" aria-label="Restart" title="Restart"><svg class="icon"><use href="#i-restart"/></svg></button>
       <button type="button" class="icon-btn" id="discard" aria-label="Delete take" title="Delete take"><svg class="icon"><use href="#i-trash"/></svg></button>
       <button type="button" class="icon-btn" id="pause" aria-label="Pause" title="Pause"><svg class="icon"><use href="#i-pause"/></svg></button>

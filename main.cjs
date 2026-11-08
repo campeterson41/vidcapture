@@ -65,7 +65,11 @@ if(!locked){app.quit();}else{
         if(response!==1)return;
         await recorder.stop();
       }
-      await extensionBridge?.close();surfaces?.dispose();
+      await extensionBridge?.close();
+      // The microphone indicator's level readers are stopped and waited for (bounded). One
+      // whose exit was not confirmed is reported, not assumed gone; quitting goes on.
+      const meterEnd=await surfaces?.dispose();
+      if(meterEnd?.unconfirmed?.length)console.error(`VidCapture: microphone level reader did not confirm its exit (pid ${meterEnd.unconfirmed.join(', ')}).`);
       // Stop the chain (which also cancels a recovery in progress) and wait for the watch to drain.
       await recorder.audioChain?.stop().catch(()=>{});await watchDone;
       await titles?.flush().catch(()=>{});media?.dispose();transcripts?.dispose();await recorder.dispose();allowQuit=true;app.quit();

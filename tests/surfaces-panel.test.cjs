@@ -267,3 +267,12 @@ test('the panel state carries a microphone cleanup failure, and Try again reruns
   rec.state.phase='recording';
   await assert.rejects(s.panelRetryMic(),/Stop and save this recording first/);assert.equal(synced,1,'never during a take');
 });
+
+
+test('panel start rechecks a browser settings lock after waiting for the default source',async()=>{
+ const rec=makeRecorder();rec.state.target={kind:'monitor',width:1280,height:720};
+ const s=new Surfaces({recorder:rec,showMain(){},hideMain(){}});let release,counts=0;
+ s.settled=()=>new Promise(resolve=>{release=resolve;});s.countdown=async()=>{counts++;return false;};
+ const pending=s.panelStart();s.extensionMutation=true;release();
+ await assert.rejects(pending,/Wait for the current recording action/);assert.equal(counts,0);assert.equal(s.startPending,undefined);
+});

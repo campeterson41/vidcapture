@@ -1,4 +1,24 @@
-# v0.1.0-alpha.6 verification
+# v0.1.0-alpha.7 verification
+
+Alpha.7 adds a compact Chrome extension panel for the desktop recorder's settings, a microphone level indicator on the floating recording controls, and safer handling when the selected microphone disappears. It also changes camera-preview shutdown for the transport path without background effects and places the recording controls before they appear. The extension is packaged as a versioned ZIP, with an installation guide. [Extension settings](../extension/SETTINGS.md) lists the controls and their limits.
+
+These changes were reviewed by reviewers separate from their authors on November 7 and 8, 2026, on the same single Omarchy workstation:
+
+- 297 Node tests passed in the alpha.7 snapshot by itself, run from a fresh extraction of the release archive, including the extension settings tests, the microphone level, mute and source-loss tests, the camera lifecycle tests and the recording-controls placement tests. The snapshot passed the privacy audit.
+- **Extension panel.** The panel keeps Start and the source choice up front and adds Camera & background, Audio, and Recording views covering all 18 recorder settings. The desktop app's extension bridge accepts the settings commands, refuses them during a take, countdown or processing, and runs native file and folder choosers itself without accepting browser paths. Tests drive the real recorder, camera settings and extension bridge with fixture devices.
+- **Microphone level and mute.** With an isolated audio server and a synthetic tone source, the level indicator moved while the selected microphone carried sound. It showed silence after the microphone was muted or its volume was set to zero, and the saved recording matched: tone, then silence, with no fallback to another source.
+- **Microphone loss.** With the same isolated setup, removing the selected microphone stopped the take, saved the part recorded before the loss as a playable file, and showed a persistent warning, instead of switching to another microphone.
+- **Camera preview shutdown.** On one workstation, the old transport-preview shutdown path reproduced a video-player crash on cycle 12 of a synthetic test. With the change, 60 intended closes completed without a crash. The change applies only to previews fed by the camera transport without background effects. It avoids that teardown path; it does not establish the precise crash cause, repair a graphics driver, or certify physical-camera behavior, background blur, or longer use.
+- **Recording-controls placement.** A compositor rule now gives the floating controls their initial position before they appear. In one controlled native run, all 272 tone frames and 392 narration frames passed the unchanged margin check without the earlier controls intrusion. Sampled frames showed only the owned test scene. This is captured-video evidence, not a continuous window-mapping trace or a guarantee for every monitor setup. The first narration frame still showed minor glyph irregularities; pristine raster rendering was not established.
+- **Editing and sharing, end to end.** In one native run on the workstation, with a short synthetic recording and a disposable account device, the desktop app deleted words from the transcript, undid and reapplied the cut, saved, reopened the project with the cut kept, exported, and shared. The downloaded shared file matched the exported file byte for byte. In Chromium, the shared page showed captions and a transcript that matched the cut, kept a seek, played through the cut and reached the end. The run then deleted the share and its device and signed out. Earlier attempts stopped before completing, mostly on problems in the test harness; one exposed the recording-controls placement issue fixed above. This single run does not establish reliability across many runs. Browser playback was muted and nobody listened to it.
+
+Not yet verified for this release:
+
+- The first scheduled weekly summary, due November 9, 2026 at 13:00 UTC, has not yet been observed. Local tests and manual triggers do not establish delivery of that scheduled message.
+
+The audio checks used synthetic sources on an isolated audio server. Nobody listened to judge audio quality, and the checks do not establish behavior across microphones or audio hardware. Physical camera rendering, blur quality and native chooser placement were not part of these checks. In the audio test runs, the test harness's automatic desktop restore declined and was completed by a separate guarded step; this is a limit of the test harness, not a product behavior.
+
+## Alpha.6 checks
 
 Alpha.6 changes only the project's GitHub test workflow. The extension's native host starts with `#!/usr/bin/node`, the path of the `nodejs` package the install requires on Arch. The test runner kept Node elsewhere, so alpha.5's native host test failed there with ENOENT; the workflow now places the selected Node at /usr/bin/node and checks its version before the tests run. The app, extension and website are unchanged from alpha.5, so the alpha.5 checks below still describe them.
 

@@ -1,3 +1,4 @@
+import {extensionDownloadSection} from './extension-download';
 // Marketing homepage and sign-in page for vidcapture.stream.
 // Product illustrations are drawn in HTML/CSS from the desktop app's current layout.
 
@@ -178,7 +179,7 @@ ${demo}
 				<li>Viewers can comment or react at an exact moment, without an account, and turn on captions made from your transcript</li>
 				<li>You get an email when someone comments, and can turn that off</li>
 				<li>Make any video public or private, or remove it and its link stops working right away</li>
-				<li>A Chrome extension shows VidCapture links as animated previews in Gmail and starts a recording from the toolbar</li>
+				<li><a href="#chrome-extension">A Chrome extension</a> adds recording controls to your toolbar and shows VidCapture links as animated previews in Gmail</li>
 			</ul>
 		</div>
 		<div class="feature-visual"><img class="shot" src="/shots/watch-comments.webp" width="1000" height="1270" alt="A shared video playing on its watch page, with timestamped comments below" loading="lazy" decoding="async"></div>
@@ -257,7 +258,7 @@ ${demo}
 <section class="install" id="install">
 	<div class="section-head">
 		<h2>Get started</h2>
-		<p>VidCapture is an early source release for Omarchy. Install the prerequisites listed in the <a href="${repo}#install">README</a>, then build and install:</p>
+		<p>VidCapture is an early source release for Omarchy. Install the prerequisites listed in the <a href="${repo}#install">README</a>, then build and install:</p><p class="extension-entry">Already have the app? <a href="#chrome-extension">Add the Chrome extension</a>.</p>
 	</div>
 	<div class="install-grid">
 		<pre class="code"><code>git clone ${repo}.git
@@ -272,6 +273,8 @@ cd vidcapture
 		</ol>
 	</div>
 </section>
+
+${extensionDownloadSection()}
 
 <section class="faq" id="faq">
 	<div class="section-head"><h2>Questions</h2></div>

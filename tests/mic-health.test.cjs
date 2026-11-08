@@ -191,15 +191,23 @@ test('turning cleanup off while an ensure is waiting leaves no chain behind',asy
   assert.equal(await sync,undefined);assert.equal(recorder.state.micCleanupError,null);assert.equal(c.child,null);
 });
 
-test('stopping while a new chain is still being checked ends that chain',async t=>{
+// The canceled ensure can reject before stop() has finished waiting for the process to
+// exit (under load, or a slow exit), so the expectation is attached before stopping.
+// Awaiting stop() first left that rejection unhandled for a moment, which failed the
+// test under parallel load (retained 195/196 run, extension task evidence).
+async function stopWhileChecking(t,slowExitMs){
   const g=graph(),c=chain(g,{timing:{...FAST,startMs:2000}});t.after(()=>c.stop());
+  if(slowExitMs){const kill=c.kill.bind(c);c.kill=async(...a)=>{await kill(...a);await new Promise(r=>setTimeout(r,slowExitMs));};}
   const pending=c.ensure(SETTINGS);
+  const outcome=assert.rejects(pending,e=>e.canceled===true);
   while(!c.child)await new Promise(r=>setTimeout(r,2));
   const child=c.child;
   await c.stop();g.up();
-  await assert.rejects(pending,e=>e.canceled===true);
+  await outcome;
   assert.equal(c.child,null);assert.notEqual(child.exitCode===null&&child.signalCode===null,true,'spawned process ended');
-});
+}
+test('stopping while a new chain is still being checked ends that chain',t=>stopWhileChecking(t,0));
+test('the same holds when stopping waits a long time for the process to exit',t=>stopWhileChecking(t,100));
 
 test('a stopped watch finishes a check in progress without recovering',async()=>{
   let finish,recovers=0;

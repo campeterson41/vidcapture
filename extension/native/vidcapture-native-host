@@ -5,7 +5,7 @@ const net=require('node:net'),path=require('node:path'),os=require('node:os');
 const {spawn}=require('node:child_process');
 const socketPath=process.env.VIDCAPTURE_SOCKET||path.join(os.homedir(),'.local/state/capture/extension.sock');
 const launcher=process.env.VIDCAPTURE_LAUNCHER||path.join(os.homedir(),'.local/bin/capture');
-const allowed=new Set(['status','sources','configure','select','pick','preview','start','pause','resume','stop','open','library']);
+const allowed=new Set(['status','sources','configure','select','pick','preview','start','pause','resume','stop','open','library','studio','refreshDevices','setCameraControl','resetCameraControls','setMicLevel','addBackground','removeBackground','chooseOutputDir','openFolder','retryCleanup','restart','discard']);
 const origin=process.argv[2];
 if(origin&&origin!=='chrome-extension://dagpaflngbhbgpeichcnhalplkdmkfie/')process.exit(1);
 let buffer=Buffer.alloc(0),launch=null;
@@ -36,7 +36,7 @@ async function handle(m){
   let response;
   try{response=await request(m);}catch(e){
    if(!['ENOENT','ECONNREFUSED'].includes(e.code))throw e;
-   if(['pause','resume','stop'].includes(m.action))throw new Error('The recorder is disconnected. Open VidCapture to check your recording.');
+   if(['pause','resume','stop','restart','discard'].includes(m.action))throw new Error('The recorder is disconnected. Open VidCapture to check your recording.');
    await ensureApp();response=await request(m);
   }
   reply({id,...response});

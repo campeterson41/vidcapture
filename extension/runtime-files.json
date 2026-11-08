@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "extensionId": "dagpaflngbhbgpeichcnhalplkdmkfie",
+  "files": [
+    {"source": "extension/manifest.json", "archive": "manifest.json"},
+    {"source": "extension/background.js", "archive": "background.js"},
+    {"source": "extension/gmail.js", "archive": "gmail.js"},
+    {"source": "extension/popup.html", "archive": "popup.html"},
+    {"source": "extension/popup.css", "archive": "popup.css"},
+    {"source": "extension/popup.js", "archive": "popup.js"},
+    {"source": "extension/icons/icon-16.png", "archive": "icons/icon-16.png"},
+    {"source": "extension/icons/icon-32.png", "archive": "icons/icon-32.png"},
+    {"source": "extension/icons/icon-48.png", "archive": "icons/icon-48.png"},
+    {"source": "extension/icons/icon-128.png", "archive": "icons/icon-128.png"},
+    {"source": "extension/native/vidcapture-native-host", "archive": "native/vidcapture-native-host", "executable": true},
+    {"source": "extension/native/install.sh", "archive": "native/install.sh", "executable": true},
+    {"source": "extension/native/install.cjs", "archive": "native/install.cjs"},
+    {"source": "extension/INSTALL.md", "archive": "README.md"},
+    {"source": "extension/LICENSE", "archive": "LICENSE"}
+  ]
+}

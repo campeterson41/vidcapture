@@ -4,7 +4,7 @@ A Loom-style recorder for Omarchy. Record your screen with a camera bubble, edit
 
 VidCapture records a window, area, or display with your microphone, system audio, and an optional circular camera. Cut and trim with a word-level transcript, remove filler words, and save a new MP4. Recording and editing work without an account and stay on your computer. Sharing is optional: use a free vidcapture.stream account, or deploy the sharing server in your own Cloudflare account.
 
-**Early source release, v0.1.0-alpha.6.** Tested on one Omarchy workstation with Hyprland 0.56.2, Electron 43, GPU Screen Recorder 6.1.4, FFmpeg 9, and an NVIDIA Quadro T2000 alongside Intel graphics. Broader hardware compatibility is not yet established.
+**Early source release, v0.1.0-alpha.7.** Tested on one Omarchy workstation with Hyprland 0.56.2, Electron 43, GPU Screen Recorder 6.1.4, FFmpeg 9, and an NVIDIA Quadro T2000 alongside Intel graphics. Broader hardware compatibility is not yet established.
 
 [Project website](https://vidcapture.stream) · [Releases](https://github.com/campeterson41/vidcapture/releases) · [Report a bug](https://github.com/campeterson41/vidcapture/issues)
 
@@ -16,7 +16,7 @@ VidCapture records a window, area, or display with your microphone, system audio
 - **Edit without re-recording.** Trim, cut, and undo. Read the transcript, click a word to jump there, select words to cut them, and remove "um" and "uh" in one step. Every save is a new version; the original is never overwritten.
 - **Library** of every take and its versions, with titles written from what you said.
 - **Share** an unlisted link with resumable uploads, a link preview for Slack and LinkedIn, an animated card for email, and timestamped comments. VidCapture remembers what is already uploaded and reuses the link.
-- **Chrome extension** that shows VidCapture links as animated previews in Gmail and starts a recording from the toolbar.
+- **Chrome extension** that shows VidCapture links as animated previews in Gmail, and a compact toolbar panel to start a recording and change every recording setting, including camera background blur, through the installed app. See [extension/SETTINGS.md](extension/SETTINGS.md).
 
 ## Install
 
@@ -33,7 +33,7 @@ Then clone, build the two helpers, and install:
 ```sh
 git clone https://github.com/campeterson41/vidcapture.git
 cd vidcapture
-git checkout v0.1.0-alpha.6
+git checkout v0.1.0-alpha.7
 ./engine/build.sh
 ./engine/build-camera.sh
 ./install.sh
@@ -52,7 +52,7 @@ Each of these installs separately and only into your home folder. VidCapture wor
 | Transcripts, filler-word removal, automatic titles | `./scripts/setup-transcription.sh` | About 1 GB. Runs on the CPU. |
 | Background blur and background images | `./scripts/setup-camera-effects.sh` | An NVIDIA GPU with a current driver. About 2.6 GB. |
 | Noise removal and voice gate | `sudo pacman -S noise-suppression-for-voice` | PipeWire. |
-| Chrome extension | `./extension/native/install.sh`, then load `extension/` unpacked | Chromium or Google Chrome. |
+| Chrome extension | See [extension/INSTALL.md](extension/INSTALL.md) for the release ZIP or this checkout's `extension/` folder | The desktop app, Chromium or Google Chrome. |
 
 Restart VidCapture after installing one.
 

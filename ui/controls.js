@@ -72,7 +72,42 @@
     });
     document.addEventListener('mouseenter', () => clearTimeout(foldTimer));
   }
+  // Microphone input indicator. The main process measures the source the recording's
+  // own microphone stream reads (take-meter.cjs) and sends a state and level.
+  const mic = $('mic'), micStatus = $('mic-status');
+  const NOTE = ' Measured at the input this recording reads, not from the saved file.';
+  const MIC = {
+    checking: 'Microphone: checking the recording input',
+    live: 'Microphone: sound is reaching the recording input',
+    quiet: 'Microphone: connected, quiet right now',
+    muted: 'Microphone is muted, so this recording gets silence from it',
+    held: 'Microphone input is on hold in this recording, so it may get silence',
+    unlinked: 'Microphone is not connected to this recording',
+    cleanup: 'Microphone cleanup stopped, so the cleaned microphone track may be silent',
+    unavailable: 'Microphone level unavailable, so it cannot be confirmed right now',
+    paused: 'Paused. The microphone is not being recorded',
+    none: 'No microphone in this recording',
+  };
+  // Spoken only when the meaning changes. Live and quiet count as one working state,
+  // so pauses in speech are never announced.
+  const group = (st) => (st === 'live' || st === 'quiet' ? 'ok' : st);
+  let micShown = null;
+  function renderMic(m) {
+    const st = m && MIC[m.state] ? m.state : 'checking';
+    const level = st === 'live' ? Math.max(0, Math.min(1, Number(m.level) || 0)) : 0;
+    mic.dataset.state = st;
+    // Scaled from 35 to 100 percent so even a soft voice shows clearly.
+    mic.style.setProperty('--level', st === 'live' ? String(0.35 + 0.65 * level) : '0');
+    mic.setAttribute('aria-label', MIC[st]);
+    mic.title = MIC[st] + '.' + (st === 'none' ? '' : NOTE);
+    if (group(st) !== micShown) {
+      const first = micShown === null;
+      micShown = group(st);
+      if (!first && st !== 'checking') micStatus.textContent = MIC[st];
+    }
+  }
+  vc.on('mic', renderMic);
   vc.on('state', render);
   vc.on('expanded', (on) => { expanded = on; render(); });
-  vc.controlsState().then(render).catch(() => render());
+  vc.controlsState().then((s) => { render(s); renderMic(s && s.mic); }).catch(() => { render(); renderMic(null); });
 })();

@@ -6,6 +6,7 @@ const path=require('node:path');
 const {execFile,spawn}=require('node:child_process');
 const {promisify}=require('node:util');
 const geometry=require('./ui/geometry.js');
+const {TakeMeter,peakScanner,peakLevel}=require('./take-meter.cjs');
 const run=promisify(execFile);
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 const LIVE=new Set(['recording','paused']);
@@ -28,7 +29,10 @@ async function clients(){return JSON.parse(await hypr(['clients','-j']));}
 async function monitors(){return JSON.parse(await hypr(['monitors','-j'])).filter(m=>!m.disabled).map(m=>({...geometry.logicalMonitor(m),label:displayName(m)}));}
 
 class Surfaces{
-  constructor({recorder,showMain,hideMain,mainVisible,sendMain,preload,onSettings}){
+  constructor({recorder,showMain,hideMain,mainVisible,sendMain,preload,onSettings,takeMeter}){
+    // Microphone indicator on the recording controls (take-meter.cjs). It runs only while
+    // the controls are open during a recording or paused take.
+    this.takeMeter=takeMeter||new TakeMeter({onUpdate:m=>this.sendMic(m)});
     // onSettings runs after the panel saves settings, so the main process can follow along (live mic chain).
     this.onSettings=onSettings||(async()=>{});
     this.recorder=recorder;this.sendMain=sendMain||(()=>{});this.mainLevel=false;this.mainSnapshot=null;this.showMain=showMain;this.hideMain=hideMain;this.mainVisible=mainVisible||(()=>false);this.preload=preload||path.join(__dirname,'surfaces-preload.cjs');
@@ -94,7 +98,7 @@ class Surfaces{
   }
 
   // startPending covers the moments before the recorder reports 'starting'.
-  busy(){return !!(this.startPending||BUSY.has(this.recorder.state.phase)||this.recorder.state.job?.running);}
+  busy(){return !!(this.startPending||this.extensionMutation||BUSY.has(this.recorder.state.phase)||this.recorder.state.job?.running);}
 
   /* Launcher bar */
 
@@ -316,17 +320,15 @@ class Surfaces{
     let child;
     try{child=spawn('parec',['--device',device,'--format=s16le','--rate=16000','--channels=1','--latency-msec=50','--client-name=VidCapture level','--stream-name=Microphone level'],{stdio:['ignore','pipe','ignore']});}
     catch{return;}
-    const level={mic:want,child,peak:0,timer:null};this.level=level;
+    const level={mic:want,child,scanner:peakScanner(),timer:null};this.level=level;
     child.on('error',()=>{if(this.level===level)this.stopLevel();});
-    child.on('exit',()=>{if(this.level===level){this.level=null;this.sendLevel(-1);}});
-    child.stdout.on('data',buf=>{
-      for(let i=0;i+1<buf.length;i+=2){const v=Math.abs(buf.readInt16LE(i));if(v>level.peak)level.peak=v;}
-    });
+    // The reader ended on its own: stop its timer too, so no level is sent for a
+    // reader that is gone.
+    child.on('exit',()=>{if(this.level===level)this.stopLevel();});
+    child.stdout.on('data',buf=>{if(this.level===level)level.scanner.scan(buf);});
     level.timer=setInterval(()=>{
       // Peak over the last interval on a -60 to 0 dB scale.
-      const p=level.peak/32768;level.peak=0;
-      const db=p>0?20*Math.log10(p):-60;
-      this.sendLevel(Math.max(0,Math.min(1,(db+60)/60)));
+      if(this.level===level)this.sendLevel(peakLevel(level.scanner.take()));
     },80);
   }
 
@@ -489,6 +491,8 @@ class Surfaces{
   async panelStart(){
     if(this.busy())throw new Error('A recording is already starting.');
     await this.settled();
+    // A browser settings command may have begun while the default source settled.
+    if(this.busy())throw new Error('Wait for the current recording action to finish.');
     // Problems the recorder would refuse are reported here, without the panel
     // closing and reopening.
     const st=this.recorder.state,t=st.target;
@@ -762,6 +766,7 @@ class Surfaces{
     if(this.panel&&!this.panel.isDestroyed())this.panel.webContents.send('vc:panel',this.panelState(false));
     this.syncLevel();
     this.syncStage();
+    this.syncMeter(state);
     if(LIVE.has(state.phase)){
       if(!this.controls&&!this.controlsBusy&&!this.noControls)this.controlsBusy=this.openControls(state).catch(e=>console.error('controls',e)).finally(()=>{this.controlsBusy=null;});
       else if(this.controls&&!this.controls.isDestroyed())this.controls.webContents.send('vc:state',{phase:state.phase,elapsed:state.elapsed,shortcuts:state.shortcuts||{}});
@@ -780,14 +785,21 @@ class Surfaces{
     // take. When the VidCapture top bar icon is installed it already shows the
     // timer and opens Pause and Stop, so leave the screen clean.
     if(spot.collapsed&&await this.barIcon()){this.noControls=true;return;}
-    await this.rule('vidcapture-controls',TITLES.controls,`monitor=${lua(spot.monitor)},size={${spot.width},${spot.height}},no_initial_focus=true`);
+    // The rule also gives the spot (relative to its monitor), so the controls
+    // appear there from the first frame. Without it Hyprland first shows them
+    // centered on the monitor, inside an area being recorded, until place() moves them.
+    const home=ms.find(m=>m.id===spot.monitor);
+    const dx=home?spot.x-home.x:-1,dy=home?spot.y-home.y:-1;
+    const at=home&&Number.isInteger(dx)&&Number.isInteger(dy)&&dx>=0&&dy>=0&&dx+spot.width<=home.width&&dy+spot.height<=home.height?`,move={${lua(dx)},${lua(dy)}}`:'';
+    await this.rule('vidcapture-controls',TITLES.controls,`monitor=${lua(spot.monitor)},size={${spot.width},${spot.height}},no_initial_focus=true${at}`);
     const win=this.window('controls',TITLES.controls,spot,'controls.html',{collapsed:spot.collapsed?'1':'0'});
     win.spot=spot;this.controls=win;
-    win.on('closed',()=>{if(this.controls===win)this.controls=null;});
+    win.on('closed',()=>{if(this.controls===win){this.controls=null;this.takeMeter.stop();}});
     await new Promise(r=>win.once('ready-to-show',r));
     win.address=await this.place(win,TITLES.controls,spot);
     if(!win.isDestroyed())win.webContents.send('vc:state',{phase:this.recorder.state.phase,elapsed:this.recorder.snapshot().elapsed,shortcuts:this.recorder.state.shortcuts||{}});
     if(!LIVE.has(this.recorder.state.phase))this.closeControls();
+    else this.syncMeter();
   }
 
   // Whether the Omarchy bar shows a VidCapture icon (a *.vidcapture widget).
@@ -803,7 +815,16 @@ class Surfaces{
     return on;
   }
 
-  closeControls(){const c=this.controls;this.controls=null;if(c&&!c.isDestroyed())c.destroy();}
+  closeControls(){const c=this.controls;this.controls=null;this.takeMeter.stop();if(c&&!c.isDestroyed())c.destroy();}
+
+  // Points the indicator at this take: the recorder's process (whose own PipeWire stream
+  // it checks) and the source the take was started on. Anything else stops it.
+  syncMeter(state=this.recorder.state){
+    const c=this.controls,child=this.recorder.child;
+    if(!c||c.isDestroyed()||!LIVE.has(state.phase)||!child?.pid){this.takeMeter.stop();return;}
+    this.takeMeter.sync({pid:child.pid,phase:state.phase,expect:this.recorder.takeAudio?.micSource||null,micNone:state.settings?.microphone==='none'});
+  }
+  sendMic(m){const c=this.controls;if(c&&!c.isDestroyed())c.webContents.send('vc:mic',m);}
 
   // Expands the corner dot into the full controls, or folds them back.
   async setExpanded(expanded){
@@ -836,7 +857,7 @@ class Surfaces{
       openPicker:[['bar'],(_w,mode)=>this.openPicker(mode,{intent:'record',origin:'bar'})],
       closeBar:[['bar'],()=>this.dismissBar()],
       countdownCancel:[['countdown'],()=>this.closeCountdown()],
-      controlsState:[['controls'],()=>{const s=this.recorder.snapshot();return {phase:s.phase,elapsed:s.elapsed,shortcuts:s.shortcuts||{},collapsed:!!this.controls?.spot?.collapsed};}],
+      controlsState:[['controls'],()=>{const s=this.recorder.snapshot();return {phase:s.phase,elapsed:s.elapsed,shortcuts:s.shortcuts||{},collapsed:!!this.controls?.spot?.collapsed,mic:this.takeMeter.snapshot()};}],
       restart:[['controls'],()=>this.restartTake()],
       discard:[['controls'],()=>this.discardTake()],
       pause:[['controls'],()=>this.recorder.pause()],
@@ -861,7 +882,9 @@ class Surfaces{
     for(const [name,[kinds,fn]] of Object.entries(handlers))ipcMain.handle(`vc:${name}`,async(event,...args)=>{const win=owned(event,kinds);return fn(win,...args);});
   }
 
-  dispose(){this.disposed=true;this.closeFrame();this.closeCountdown();this.closePanel();this.stopLevel();this.closeBar();this.closePicker();this.closeControls();}
+  dispose(){this.disposed=true;this.closeFrame();this.closeCountdown();this.closePanel();this.stopLevel();this.closeBar();this.closePicker();this.closeControls();this.takeMeter.stop();
+    // Resolves once the indicator's level readers have really exited.
+    return this.takeMeter.drain?.();}
 }
 
 module.exports={Surfaces,BAR,PILL,DOT,PANEL,TITLES};
