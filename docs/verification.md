@@ -1,4 +1,4 @@
-# v0.1.0-alpha.7 verification
+# Release verification
 
 ## Alpha.9 update-check status
 

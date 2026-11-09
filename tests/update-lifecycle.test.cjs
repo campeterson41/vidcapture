@@ -70,4 +70,5 @@ test('a prepared update can restart offline without a new check',async t=>{
 test('a concurrent background check is never reported as up to date',async t=>{
  const f=await appFixture(t);f.updater.state={current:'0.1.0-alpha.8',status:'checking',available:null};await f.invoke('checkUpdates');
  assert.equal(f.dialogs.at(-1).message,'Checking for updates');assert.equal(f.events.includes('prepare'),false);
+ f.updater.state.status='idle';f.updater.checking=true;await f.invoke('checkUpdates');assert.equal(f.dialogs.at(-1).message,'Checking for updates');
 });
