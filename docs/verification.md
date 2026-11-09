@@ -1,5 +1,9 @@
 # v0.1.0-alpha.7 verification
 
+## Alpha.9 update-check status
+
+Alpha.9 fixes the Updates dialog when an automatic check is already running. It reports that the check is in progress instead of saying the app is up to date before the response arrives. The main-process lifecycle suite covers this overlap. The updater and installation behavior are otherwise unchanged from alpha.8.
+
 ## Alpha.8 app updates
 
 Alpha.8 adds automatic GitHub release checks, an Updates control, verified source downloads, separate native-helper builds, and an explicit restart to activate the new app. Existing alpha.7 and earlier installations need one manual upgrade.

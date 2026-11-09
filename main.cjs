@@ -256,6 +256,7 @@ if(!locked){app.quit();}else{
         if(updates.installing){await dialog.showMessageBox(win,{message:'Preparing your update',detail:'VidCapture is downloading and building the new version. This can take several minutes.'});return;}
         if(!updates.ready)await updates.check({force:true});
         const u=updates.state;
+        if(u.status==='checking'){await dialog.showMessageBox(win,{message:'Checking for updates',detail:'A check is still running. Open Updates again in a moment.'});return;}
         if(u.status==='error')throw new Error(u.error);
         if(!u.available){await dialog.showMessageBox(win,{message:'VidCapture is up to date',detail:`Installed version: ${u.current}`});return;}
         if(surfaces.busy()||surfaces.picker||surfaces.counting||transcripts.job){await dialog.showMessageBox(win,{message:`VidCapture ${u.available} is available`,detail:'Finish recording and processing, then open Updates to install it.'});return;}
