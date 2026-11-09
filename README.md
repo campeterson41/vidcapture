@@ -4,7 +4,7 @@ A Loom-style recorder for Omarchy. Record your screen with a camera bubble, edit
 
 VidCapture records a window, area, or display with your microphone, system audio, and an optional circular camera. Cut and trim with a word-level transcript, remove filler words, and save a new MP4. Recording and editing work without an account and stay on your computer. Sharing is optional: use a free vidcapture.stream account, or deploy the sharing server in your own Cloudflare account.
 
-**Early source release, v0.1.0-alpha.9.** Tested on one Omarchy workstation with Hyprland 0.56.2, Electron 43, GPU Screen Recorder 6.1.4, FFmpeg 9, and an NVIDIA Quadro T2000 alongside Intel graphics. Broader hardware compatibility is not yet established.
+**Early source release, v0.1.0-alpha.10.** Tested on one Omarchy workstation with Hyprland 0.56.2, Electron 43, GPU Screen Recorder 6.1.4, FFmpeg 9, and an NVIDIA Quadro T2000 alongside Intel graphics. Broader hardware compatibility is not yet established.
 
 [Project website](https://vidcapture.stream) · [Releases](https://github.com/campeterson41/vidcapture/releases) · [Report a bug](https://github.com/campeterson41/vidcapture/issues)
 
@@ -33,7 +33,7 @@ Then clone, build the two helpers, and install:
 ```sh
 git clone https://github.com/campeterson41/vidcapture.git
 cd vidcapture
-git checkout v0.1.0-alpha.9
+git checkout v0.1.0-alpha.10
 ./engine/build.sh
 ./engine/build-camera.sh
 ./install.sh
@@ -54,6 +54,8 @@ Updates keep recordings, settings, sharing connections, optional models, and the
 Alpha installations receive later prereleases and stable releases. Stable installations receive stable releases only. The Chrome extension is currently loaded unpacked and must be updated separately using [its install guide](extension/INSTALL.md). Development checkouts use their own source workflow.
 
 **Already using alpha.7 or earlier?** Those versions have no updater. Quit the app, keep your old folder, and follow the install steps above in a new folder once. The new copy uses your existing recordings and settings, and later updates appear in the app.
+
+The signed-in website also offers **Click here to update**, which opens the app’s updater through a `vidcapture://updates` link. Your browser may ask permission to open VidCapture. Website links are registered by alpha.10 and later when installed or first opened after an in-app upgrade. The link only opens the update dialog; it cannot install or restart without your confirmation. If nothing opens, use [the website’s update guide](https://vidcapture.stream/update). The website cannot detect your installed version, so you can dismiss its release notice if you already updated.
 
 ### Optional features
 

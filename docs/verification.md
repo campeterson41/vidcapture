@@ -1,5 +1,11 @@
 # Release verification
 
+## Alpha.10 website update links
+
+Alpha.10 adds an owned Linux desktop URL entry for `vidcapture://updates`. A website link opens the existing update dialog on cold start or in the running app. Exact URL validation rejects duplicate URLs, query strings, fragments, and other actions while allowing Electron to reorder its startup arguments. Installation and restart still require confirmation and the existing recording/processing safeguards. The signed-in site displays a dismissible release announcement and provides manual steps for copies without a URL handler. No installed-version detection or successful-update claim is inferred from a browser click.
+
+Verification: 329 tests pass in the private checkout, including real-main lifecycle tests for cold and running-app links. An isolated Linux home resolved the desktop MIME handler and delivered the exact URL through `gio open` to a probe. The actual Worker bundle passed headless Chromium checks at 1440, 390, and 320 pixels with a synthetic read-only account, covering signed-in and signed-out pages, keyboard activation, per-release dismissal, copy fallback, and security headers. The workstation app and real accounts were not changed by these tests.
+
 ## Alpha.9 update-check status
 
 Alpha.9 fixes the Updates dialog when an automatic check is already running. It reports that the check is in progress instead of saying the app is up to date before the response arrives. The main-process lifecycle suite covers this overlap. The updater and installation behavior are otherwise unchanged from alpha.8.

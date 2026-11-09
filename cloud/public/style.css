@@ -422,3 +422,21 @@ input.pair-code{margin:4px 0 0;font-size:26px;text-transform:uppercase;max-width
 @media(max-width:650px){.extension-install{padding:42px 0}.extension-setup-grid{grid-template-columns:minmax(0,1fr);gap:32px}.extension-intro{margin:22px 0 28px}.extension-download-actions{width:100%}.extension-download-actions .button{width:100%;font-size:13px;gap:10px}.extension-copy-status{min-height:0}.extension-install h3{font-size:18px}.extension-prompt textarea{font-size:12px;padding:12px}.extension-terminal .code{padding:14px}}
 
 .extension-setup-grid>*,.extension-intro>*{min-width:0}.extension-install{overflow-wrap:anywhere}
+
+/* Signed-in release notice and the older-install fallback. */
+.app-update-notice { max-width: 1200px; margin: 20px auto 0; padding: 18px 24px; background: #e6eee3; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 14px 24px; }
+.app-update-notice p { margin: 4px 0 0; }
+.app-update-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; }
+.app-update-dismiss { border: 0; background: transparent; color: inherit; font-size: 26px; line-height: 1; padding: 8px; cursor: pointer; }
+.app-update-feedback { flex-basis: 100%; font-size: 14px; }
+.app-update-page { max-width: 820px; margin: 0 auto; padding: 54px 24px 72px; }
+.app-update-page h1 { margin-bottom: 14px; }
+.app-update-page .update-lede { font-size: 20px; }
+.app-update-page section { margin-top: 36px; }
+.app-update-page h2 { font-size: 24px; }
+.app-update-page p { margin: 14px 0; }
+.update-manual { margin-top: 22px; }
+.update-manual summary { font-weight: 600; cursor: pointer; padding: 10px 0; }
+.app-update-page .code { overflow-x: auto; padding: 20px; font-size: 13px; }
+@media (max-width: 700px) { .app-update-notice { margin: 12px 16px 0; padding: 16px; align-items: flex-start; } .app-update-actions { gap: 12px; } .app-update-page { padding: 30px 20px 48px; } }
+@media (max-width: 380px) { header.site-header { flex-wrap: wrap; gap: 16px; } }

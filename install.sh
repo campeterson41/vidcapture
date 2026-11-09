@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-capture_source="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+capture_source="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 capture_home="${CAPTURE_INSTALL_HOME:-$HOME}"
 capture_launcher="$capture_home/.local/bin/capture"
 capture_desktop="$capture_home/.local/share/applications/capture.desktop"
@@ -43,3 +43,6 @@ echo "Installed VidCapture in the app launcher."
 # Start/stop and pause shortcuts, only on keys no other binding uses.
 # CAPTURE_NO_HOTKEYS=1 skips this step.
 /usr/bin/node "$capture_source/hotkeys.cjs" install "$capture_home" "$capture_launcher" || echo "Shortcuts were not added." >&2
+
+# Register the website update link without changing unrelated URL handlers.
+/usr/bin/node "$capture_source/desktop-links.cjs" install "$capture_home" || echo "Website links are unavailable. Use Updates inside VidCapture." >&2

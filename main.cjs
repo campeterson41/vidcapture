@@ -21,12 +21,14 @@ const {CameraProfiles}=require('./camera-profiles.cjs');
 const {startExtensionBridge}=require('./extension-bridge.cjs');
 const {shortcutsFrom}=require('./hotkeys.cjs');
 const {Updates}=require('./updates.cjs');
+const {updateLinkRequest,registerUpdateLink}=require('./desktop-links.cjs');
 protocol.registerSchemesAsPrivileged([{scheme:'capture-media',privileges:{standard:true,secure:true,stream:true,supportFetchAPI:true}}]);
 app.setName('Capture');
 app.setPath('userData',path.join(app.getPath('appData'),'capture'));
 const locked=app.requestSingleInstanceLock();
 if(!locked){app.quit();}else{
   let win,tray,recorder,media,transcripts,publisher,surfaces,titles,editorFile=null,allowQuit=false,closing=false,inhibit=null,extensionBridge=null,micWatch=null,updates=null,updateDialog=false,restartUpdate=false;
+  let updaterOpen=null,updateLinkPending=updateLinkRequest(process.argv).valid;
   const show=()=>{if(win){win.show();if(win.isMinimized())win.restore();win.focus();}};
   // `capture --panel [--screen=NAME] [--x=N]` opens the record drop-down; the
   // top bar icon passes its screen and position. `--pick` is the older name.
@@ -43,6 +45,8 @@ if(!locked){app.quit();}else{
   const hotkey=argv=>argv.includes('--toggle-recording')?'record':argv.includes('--toggle-pause')?'pause':null;
   const runHotkey=kind=>(kind==='record'?surfaces.toggleRecording():surfaces.togglePause()).catch(e=>console.error('shortcut',e));
   app.on('second-instance',(_event,argv)=>{
+    const link=updateLinkRequest(argv);
+    if(link.present){if(link.valid){updateLinkPending=true;if(updaterOpen){updateLinkPending=false;void updaterOpen();}}return;}
     if(argv.includes('--extension-service'))return;
     const key=hotkey(argv);
     if(key){if(surfaces)runHotkey(key);return;}
@@ -300,7 +304,11 @@ if(!locked){app.quit();}else{
     // Shortcut keys shown in tooltips: whatever Hyprland binds to the toggles.
     // CAPTURE_TEST_BINDS (a JSON list like `hyprctl binds -j`) stands in for the live binds in isolated checks.
     (process.env.CAPTURE_TEST_BINDS?Promise.resolve({stdout:process.env.CAPTURE_TEST_BINDS}):run('hyprctl',['binds','-j'],{timeout:3000})).then(({stdout})=>recorder.set({shortcuts:shortcutsFrom(JSON.parse(stdout))})).catch(()=>{});
+    updaterOpen=showUpdates;
+    if(!process.env.CAPTURE_TEST_DATA_DIR)registerUpdateLink().catch(e=>console.error('Website update link:',e.message));
     const startKey=hotkey(process.argv),startArgs=panelArgs(process.argv);
+    if(updateLinkPending){updateLinkPending=false;await showUpdates();return;}
+    if(updateLinkRequest(process.argv).present)return;
     if(startKey)runHotkey(startKey);else if(startArgs)openPanel(startArgs);else if(!process.argv.includes('--extension-service'))show();
   }).catch(e=>{console.error(e);dialog.showErrorBox('Capture could not open',e.message);allowQuit=true;app.quit();});
 }
