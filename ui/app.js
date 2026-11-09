@@ -4,6 +4,10 @@
   const bridge = window.capture;
   const updateButton = document.getElementById('app-updates');
   updateButton.addEventListener('click', () => bridge?.checkUpdates?.());
+  for (const id of ['alert-update', 'job-update']) {
+    document.getElementById(id).addEventListener('click', () => bridge?.checkUpdates?.());
+  }
+  const requiresUpdate = message => /(?:VidCapture update required|update required before sharing|vidcapture\.stream\/update)/i.test(String(message || ''));
   bridge?.onState?.(s => {
     const u = s.appUpdate;
     if (!u) return;
@@ -607,6 +611,7 @@
     const message = localError || (s && s.error && s.error !== jobError ? s.error : null) || null;
     const show = !!message && message !== dismissedError;
     el.alert.hidden = !show;
+    $('alert-update').hidden = !show || !requiresUpdate(message);
     if (show && el.alertText.textContent !== message) el.alertText.textContent = message;
   }
 
@@ -2146,7 +2151,9 @@
     }
     E.jobDetail.title = status === 'done' ? job.output : '';
     E.jobCancel.hidden = status !== 'running';
-    E.jobRetry.hidden = !(status === 'failed' && job.kind === 'publish' && lastShare);
+    const updateRequired = status === 'failed' && requiresUpdate(job.error);
+    $('job-update').hidden = !updateRequired;
+    E.jobRetry.hidden = updateRequired || !(status === 'failed' && job.kind === 'publish' && lastShare);
     E.jobRetry.disabled = busy;
     E.jobCancel.disabled = ed.canceling || pending === 'cancel';
     setText(E.jobCancel, ed.canceling ? 'Canceling' : 'Cancel');
