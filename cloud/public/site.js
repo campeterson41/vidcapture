@@ -1,5 +1,6 @@
 'use strict';
 const $=id=>document.getElementById(id);let toastTimer;
+const appUpgradeRequired=()=>document.getElementById('app-update-notice')?.dataset.required==='true';
 function toast(text){$('toast').textContent=text;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,4500);}
 async function api(path,options={}){const response=await fetch(path,{...options,headers:{...(options.body&&typeof options.body==='string'?{'Content-Type':'application/json'}:{}),...options.headers}});const data=response.status===204?{}:await response.json();if(!response.ok)throw Object.assign(new Error(data.error||'Request failed.'),{status:response.status});return data;}
 function el(tag,text,className){const node=document.createElement(tag);if(text!==undefined)node.textContent=text;if(className)node.className=className;return node;}
@@ -140,7 +141,7 @@ if($('account-email')){
   $('password-heading').textContent=me.hasPassword?'Password':'Set a password';$('password-form').querySelector('button[type=submit]').textContent=me.hasPassword?'Change password':'Set password';
   const list=$('account-devices');list.replaceChildren();
   if(!me.devices.length)list.append(el('li','No computers connected yet.','subtle'));
-  for(const d of me.devices){const li=el('li');li.append(el('span',d.name),el('span',`Connected ${formatDate(d.createdAt)}`,'subtle'));const b=el('button','Disconnect','quiet');b.type='button';
+  for(const d of me.devices){const li=el('li'),name=el('span',d.name);if(!d.updaterReady)name.append(el('small','Needs one-time update','device-update-status'));li.append(name,el('span',`Connected ${formatDate(d.createdAt)}`,'subtle'));const b=el('button','Disconnect','quiet');b.type='button';
    b.onclick=async()=>{b.disabled=true;try{await api('/api/account/devices/'+d.id,{method:'DELETE'});toast(`${d.name} disconnected. Share from it again to reconnect.`);load();}catch(e){toast(e.message);b.disabled=false;}};li.append(b);list.append(li);}
  };
  load();
@@ -223,7 +224,7 @@ let filling=false;
 // Videos uploaded before previews existed have no image, so their cards look different
 // and their links unfurl without a picture. Make the missing previews here, one at a time.
 async function fillPreviews(){
- if(filling)return;filling=true;
+ if(filling||appUpgradeRequired())return;filling=true;
  try{for(const v of videos.filter(v=>v.status==='ready'&&(!v.thumbnailReady||!v.posterHd)&&v.url)){try{await uploadPreview(new URL(v.url).pathname.replace('/v/','/media/'),v.id,v.thumbnailReady);const fresh=(await api('/api/admin/videos')).videos.find(x=>x.id===v.id);if(fresh)Object.assign(v,fresh);drawLibrary();}catch{}}}
  finally{filling=false;}
 }
@@ -231,9 +232,9 @@ async function loadLibrary(){
  try{
   const data=await api('/api/admin/videos');videos=data.videos;
   if(data.quotaBytes){$('storage-meter').hidden=false;$('storage-meter').textContent=`${formatSize(data.usedBytes)} of ${formatSize(data.quotaBytes)} used`;}
-  if(data.verified===false){$('verify-banner').hidden=false;api('/api/me').then(me=>$('verify-email').textContent=me.email).catch(()=>{});}$('upload-label').hidden=false;$('library-tools').hidden=!videos.length;
+  if(data.verified===false){$('verify-banner').hidden=false;api('/api/me').then(me=>$('verify-email').textContent=me.email).catch(()=>{});}$('upload-label').hidden=appUpgradeRequired();$('library-tools').hidden=!videos.length;
   $('library-message').hidden=!!videos.length;
-  if(!videos.length){const get=el('a','Get the desktop app','button');get.href='/#install';const up=el('label','Upload an MP4','quiet');up.htmlFor='upload';up.tabIndex=0;up.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();$('upload').click();}};const row=el('div',undefined,'empty-actions');row.append(get,up);$('library-message').replaceChildren(el('h2','No videos yet'),el('p','Press Share in VidCapture and your video shows up here.'),row);}
+  if(!videos.length){const get=el('a','Get the desktop app','button');get.href='/#install';const up=el('label','Upload an MP4','quiet');up.htmlFor='upload';up.tabIndex=0;up.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();$('upload').click();}};const row=el('div',undefined,'empty-actions');if(appUpgradeRequired()){get.href='/update';get.textContent='Update the desktop app';row.append(get);}else row.append(get,up);$('library-message').replaceChildren(el('h2','No videos yet'),el('p','Press Share in VidCapture and your video shows up here.'),row);}
   drawLibrary();fillPreviews();
  }catch(error){
   $('library-message').hidden=false;$('library-message').replaceChildren(el('h2',error.status===401?'Your library is private.':'Unable to load your library.'),el('p',error.status===401?'Log in to see your videos.':error.message));if(error.status===401){const link=el('a','Log in','button');link.href='/login';$('library-message').append(link);}
@@ -245,6 +246,7 @@ $('verify-resend').onclick=()=>resendVerify($('verify-resend'));
  let uploadController=null;
  $('cancel-upload').onclick=()=>uploadController?.abort();
  $('upload').onchange=async()=>{
+  if(appUpgradeRequired()){$('upload').value='';toast('Update the connected desktop app before uploading. Use Update app above.');return;}
   const file=$('upload').files[0];if(!file)return;
   if(!/\.mp4$/i.test(file.name)||file.size>20*1024**3){toast('Choose an MP4 up to 20 GB.');return;}
   uploadController=new AbortController();const signal=uploadController.signal;let uploadId=null,cardWarning=false;
@@ -269,7 +271,7 @@ $('verify-resend').onclick=()=>resendVerify($('verify-resend'));
    if(upload.status==='ready'&&!upload.thumbnailReady){$('upload-status').textContent='Creating preview…';try{await uploadPreview(file,id,false,signal);}catch(error){if(signal.aborted)throw error;cardWarning=true;}}
    try{localStorage.removeItem(fingerprint);}catch{}toast(cardWarning?'Video ready. Its preview could not be created. You can still copy the link.':'Video ready. Copy its link to share it anywhere.');
   }catch(error){toast(signal.aborted?'Upload paused. Choose the same file to resume.':error.message);}
-  finally{uploadController=null;$('upload-progress').hidden=true;$('upload').value='';$('upload-label').hidden=false;await loadLibrary();}
+  finally{uploadController=null;$('upload-progress').hidden=true;$('upload').value='';$('upload-label').hidden=appUpgradeRequired();await loadLibrary();}
  };
 }
 

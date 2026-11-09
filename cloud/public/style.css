@@ -440,3 +440,7 @@ input.pair-code{margin:4px 0 0;font-size:26px;text-transform:uppercase;max-width
 .app-update-page .code { overflow-x: auto; padding: 20px; font-size: 13px; }
 @media (max-width: 700px) { .app-update-notice { margin: 12px 16px 0; padding: 16px; align-items: flex-start; } .app-update-actions { gap: 12px; } .app-update-page { padding: 30px 20px 48px; } }
 @media (max-width: 380px) { header.site-header { flex-wrap: wrap; gap: 16px; } }
+
+.device-update-status { display: block; font-size: 13px; font-weight: 400; color: var(--muted); }
+.device-list li>span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.app-update-notice [data-upgrade-status] a { text-decoration: underline; }

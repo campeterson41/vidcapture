@@ -4,7 +4,7 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),vm=require('node:vm');
 const fs=require('node:fs/promises'),path=require('node:path'),os=require('node:os');
 const {EventEmitter}=require('node:events');
-async function appFixture(t,{argv=[]}={}){
+async function appFixture(t,{argv=[],connected=false,confirmFails=false}={}){
  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'vc-update-lifecycle-'));t.after(()=>fs.rm(dir,{recursive:true,force:true}));
  const actions={},dialogs=[],responses=[],events=[];let recorder,surfaces,updater,win;
  class Recorder extends EventEmitter{constructor(){super();recorder=this;this.dataDir=dir;this.outputDir=dir;this.state={phase:'idle',settings:{camera:'none'},devices:{},elapsed:0};}async init(){}snapshot(){return this.state;}set(p){Object.assign(this.state,p);this.emit('state',this.state);}async refreshDevices(){}async dispose(){events.push('dispose');}idleOnly(){}async start(){events.push('record');}async stop(){events.push('stop');}}
@@ -14,7 +14,8 @@ async function appFixture(t,{argv=[]}={}){
  const Generic=class{async init(){}async load(){}async reconcile(){}async stop(){}start(){}async flush(){}async saveEdits(){events.push('save-edits');}dispose(){}async close(){}applyRenames(){return Promise.resolve();}};
  const app=new EventEmitter();Object.assign(app,{setName(){},setPath(){},getPath:()=>dir,requestSingleInstanceLock:()=>true,whenReady:()=>Promise.resolve(),relaunch:o=>events.push(['relaunch',o]),quit:()=>events.push('quit')});
  const electron={app,BrowserWindow:Win,ipcMain:{handle:(name,handler)=>actions[name]=handler},Tray:class{setToolTip(){}setContextMenu(){}on(){}},Menu:{buildFromTemplate:x=>x},nativeImage:{createFromPath:()=>({resize(){return {};}})},dialog:{showMessageBox:async(_w,options)=>{dialogs.push(options);const response=responses.shift();return {response:typeof response==='function'?await response():response??0};},showErrorBox:(_t,e)=>events.push(['fatal',e])},shell:{},powerSaveBlocker:{},protocol:{registerSchemesAsPrivileged(){},handle(){}},clipboard:{}};
- const mocks={'electron':electron,'./updates.cjs':{Updates},'./desktop-links.cjs':require('../desktop-links.cjs'),'./recorder.cjs':{Recorder,ACTIVE:new Set(['selecting','starting','recording','paused','stopping'])},'./surfaces.cjs':{Surfaces},'./media.cjs':{MediaTools:Generic},'./transcript.cjs':{Transcripts:Generic},'./titles.cjs':{Titles:Generic},'./publisher.cjs':{Publisher:Generic},'./library.cjs':{Library:Generic},'./audio-chain.cjs':{AudioChain:Generic,ChainWatch:Generic,syncCleanup:async()=>{}},'./camera-settings.cjs':{CameraSettings:Generic},'./camera-effects.cjs':{CameraEffects:Generic},'./camera-profiles.cjs':{CameraProfiles:Generic},'./extension-bridge.cjs':{startExtensionBridge:async()=>new Generic()},'./hotkeys.cjs':{shortcutsFrom:()=>({})},'./autocopy.cjs':{createAutoCopy:()=>()=>{}}};
+ class Publisher extends Generic{async init(){recorder.state.publishingReady=connected;}async confirmUpdater(){events.push('confirm-updater');if(confirmFails)throw new Error('offline');}}
+ const mocks={'electron':electron,'./updates.cjs':{Updates},'./desktop-links.cjs':require('../desktop-links.cjs'),'./recorder.cjs':{Recorder,ACTIVE:new Set(['selecting','starting','recording','paused','stopping'])},'./surfaces.cjs':{Surfaces},'./media.cjs':{MediaTools:Generic},'./transcript.cjs':{Transcripts:Generic},'./titles.cjs':{Titles:Generic},'./publisher.cjs':{Publisher},'./library.cjs':{Library:Generic},'./audio-chain.cjs':{AudioChain:Generic,ChainWatch:Generic,syncCleanup:async()=>{}},'./camera-settings.cjs':{CameraSettings:Generic},'./camera-effects.cjs':{CameraEffects:Generic},'./camera-profiles.cjs':{CameraProfiles:Generic},'./extension-bridge.cjs':{startExtensionBridge:async()=>new Generic()},'./hotkeys.cjs':{shortcutsFrom:()=>({})},'./autocopy.cjs':{createAutoCopy:()=>()=>{}}};
  const context={require:name=>mocks[name]||require(name),__dirname:path.resolve(__dirname,'..'),process:{env:{CAPTURE_TEST_DATA_DIR:dir,CAPTURE_TEST_BINDS:'[]'},argv,on(){},pid:process.pid},console,setTimeout,setInterval};
  vm.runInNewContext(await fs.readFile(path.join(__dirname,'../main.cjs'),'utf8'),context);
  for(let i=0;i<50&&!actions['capture:checkUpdates'];i++)await new Promise(r=>setTimeout(r,5));
@@ -86,4 +87,9 @@ test('website link reaches the running app and cannot start a recording',async t
 test('website link during a take only reports availability and preserves recording',async t=>{
  const f=await appFixture(t);f.recorder.state.phase='recording';f.app.emit('second-instance',{},['app','--open-update-link','vidcapture://updates']);await new Promise(r=>setTimeout(r,10));
  assert.match(f.dialogs.at(-1).detail,/Finish recording/);assert.equal(f.events.includes('stop'),false);assert.equal(f.events.includes('prepare'),false);
+});
+
+test('connected app confirms migration at startup and remains usable when offline',async t=>{
+ const f=await appFixture(t,{connected:true,confirmFails:true});assert.equal(f.events.filter(e=>e==='confirm-updater').length,1);assert.equal(f.recorder.state.publishingReady,true);assert.equal(f.events.includes('quit'),false);await f.invoke('checkUpdates');assert.ok(f.dialogs.length>0);
+ const unconnected=await appFixture(t);assert.equal(unconnected.events.includes('confirm-updater'),false);
 });

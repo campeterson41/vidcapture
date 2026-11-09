@@ -1,3 +1,4 @@
+import {hasUpdater,upgradeRequired,legacyDevices,confirmUpdater,uploadMutation} from './app-upgrade';
 import {updateBanner,updatePage} from './app-updates';
 import {player} from './player';
 import {homePage,loginPage,accountPages} from './pages';
@@ -51,6 +52,17 @@ async function purge(env:Env,v:Video){
 }
 async function admin(request:Request,env:Env,url:URL){
  const auth=await owner(request,env),path=url.pathname,method=request.method;
+ if(path==='/api/admin/app-upgrade'&&method==='POST'){
+  if(!auth.device)throw new HttpError(403,'Open the updated desktop app to confirm this upgrade.');
+  if(!hasUpdater(request))return upgradeRequired();
+  await confirmUpdater(env,auth.device,auth.account.id);return json({ok:true});
+ }
+ if(uploadMutation(path,method)){
+  // Check every desktop request: a previous upgrade cannot authorize an old binary.
+  if(auth.device){if(!hasUpdater(request))return upgradeRequired();}
+  else if(await legacyDevices(env,auth.account.id))return upgradeRequired();
+ }
+ if(auth.device&&hasUpdater(request)&&(path==='/api/admin/uploads'||path==='/api/admin/browser-session')&&method==='POST')await confirmUpdater(env,auth.device,auth.account.id);
  if(path==='/api/admin/browser-session'&&method==='POST'){
   if(!auth.device)throw new HttpError(403,'Open the library from VidCapture to sign in.');
   const code=random();await env.DB.prepare('INSERT INTO login_codes VALUES(?,?,?)').bind(await digest(code),auth.device,now()+90).run();
@@ -198,7 +210,7 @@ async function mediaResponse(request:Request,env:Env,v:Video){
  return new Response(object.body,{status,headers});
 }
 type Nav='home'|'app'|'viewer';
-function shell(title:string,content:string,script='/site.js',opts:{nav?:Nav;signedIn?:boolean;description?:string;bodyClass?:string;share?:Video;origin?:string;turnstile?:string}={}){
+function shell(title:string,content:string,script='/site.js',opts:{nav?:Nav;signedIn?:boolean;description?:string;bodyClass?:string;updateRequired?:boolean;share?:Video;origin?:string;turnstile?:string}={}){
  const nav=opts.nav||'app';
  const account=opts.signedIn?'<a class="header-link" href="/account">Account</a><a class="header-cta" href="/library">My videos</a>':'<a class="header-link" href="/login">Log in</a><a class="header-cta" href="/login#signup">Sign up free</a>';
  const links=nav==='home'?'<nav class="site-nav" aria-label="Main"><a href="/#features">Features</a><a href="/#privacy">Privacy</a><a href="/#compare">Compare</a><a href="/#install">Install</a><a href="/#faq">Questions</a></nav>':'';
@@ -210,7 +222,7 @@ function shell(title:string,content:string,script='/site.js',opts:{nav?:Nav;sign
   // Slack, Discord, X and Facebook show an inline player from oEmbed and player tags.
   return `<link rel="alternate" type="application/json+oembed" href="${o}/oembed?url=${encodeURIComponent(watch)}&amp;format=json" title="${escapeHtml(share.title)}"><meta property="og:video" content="${page}"><meta property="og:video:url" content="${page}"><meta property="og:video:secure_url" content="${page}"><meta property="og:video:type" content="text/html"><meta property="og:video:width" content="${w}"><meta property="og:video:height" content="${h}"><meta name="twitter:player" content="${page}"><meta name="twitter:player:width" content="${w}"><meta name="twitter:player:height" content="${h}"><meta name="twitter:player:stream" content="${o}/media/${share.share_id}"><meta name="twitter:player:stream:content_type" content="video/mp4">`;})():'';
  const description=opts.description?`<meta name="description" content="${escapeHtml(opts.description)}">`:'';
- return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="${opts.nav==='home'?'index,follow':'noindex,nofollow'}"><meta name="referrer" content="no-referrer"><meta name="theme-color" content="#f6f5f1">${opts.turnstile?`<meta name="turnstile-sitekey" content="${escapeHtml(opts.turnstile)}">`:''}${description}${social}${embed}<title>${escapeHtml(title)} · VidCapture</title><link rel="icon" href="/icon.svg"><link rel="stylesheet" href="/style.css"><script defer src="/share-card.js"></script><script defer src="${script}"></script><script defer src="/app-updates.js"></script></head><body${opts.bodyClass?` class="${opts.bodyClass}"`:''}><a class="skip" href="#main">Skip to content</a><header class="site-header"><a class="brand" href="/" aria-label="VidCapture home"><svg class="brand-icon" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="18" fill="#375b43"/><path d="M25 18v28l23-14z" fill="#fff"/></svg>VidCapture</a>${links}<div class="header-right">${right}</div></header><div id="main">${opts.signedIn&&nav!=='viewer'&&opts.bodyClass!=='page-update'?updateBanner():''}${content}</div><footer class="site-footer"><div class="footer-brand"><svg class="brand-icon" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="18" fill="#375b43"/><path d="M25 18v28l23-14z" fill="#fff"/></svg><span>VidCapture</span></div><nav aria-label="Footer"><a href="/#features">Features</a><a href="/#install">Install</a><a href="/update">Update app</a><a href="/#faq">Questions</a><a href="${opts.signedIn?'/library':'/login'}">${opts.signedIn?'My videos':'Log in'}</a><a href="/terms">Terms</a><a href="/privacy">Privacy</a></nav><p>Record on your computer. Share one link.</p></footer><div id="toast" role="status" hidden></div></body></html>`;
+ return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="${opts.nav==='home'?'index,follow':'noindex,nofollow'}"><meta name="referrer" content="no-referrer"><meta name="theme-color" content="#f6f5f1">${opts.turnstile?`<meta name="turnstile-sitekey" content="${escapeHtml(opts.turnstile)}">`:''}${description}${social}${embed}<title>${escapeHtml(title)} · VidCapture</title><link rel="icon" href="/icon.svg"><link rel="stylesheet" href="/style.css"><script defer src="/share-card.js"></script><script defer src="${script}"></script><script defer src="/app-updates.js"></script></head><body${opts.bodyClass?` class="${opts.bodyClass}"`:''}><a class="skip" href="#main">Skip to content</a><header class="site-header"><a class="brand" href="/" aria-label="VidCapture home"><svg class="brand-icon" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="18" fill="#375b43"/><path d="M25 18v28l23-14z" fill="#fff"/></svg>VidCapture</a>${links}<div class="header-right">${right}</div></header><div id="main">${opts.signedIn&&nav!=='viewer'&&opts.bodyClass!=='page-update'?updateBanner(!!opts.updateRequired):''}${content}</div><footer class="site-footer"><div class="footer-brand"><svg class="brand-icon" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="18" fill="#375b43"/><path d="M25 18v28l23-14z" fill="#fff"/></svg><span>VidCapture</span></div><nav aria-label="Footer"><a href="/#features">Features</a><a href="/#install">Install</a><a href="/update">Update app</a><a href="/#faq">Questions</a><a href="${opts.signedIn?'/library':'/login'}">${opts.signedIn?'My videos':'Log in'}</a><a href="/terms">Terms</a><a href="/privacy">Privacy</a></nav><p>Record on your computer. Share one link.</p></footer><div id="toast" role="status" hidden></div></body></html>`;
 }
 const html=(body:string,status=200)=>new Response(body,{status,headers:{'Content-Type':'text/html;charset=UTF-8','Cache-Control':'no-store, no-transform'}});
 const browserSession=sessionAccount;
@@ -287,20 +299,21 @@ async function route(request:Request,env:Env,ctx:ExecutionContext){
  }
  if(method!=='GET'&&method!=='HEAD')throw new HttpError(405,'Method not allowed.');
  if(path==='/health')return json({ok:true});
- if(path==='/'){const signedIn=!!await browserSession(request,env);return html(shell('Record, edit, and share from your top bar',homePage(signedIn,await demoSection(env)),'/site.js',{nav:'home',signedIn,bodyClass:'page-home',description:'VidCapture is a free, open-source screen and camera recorder for Omarchy. Clean up your mic live, edit by deleting words from the transcript, and share one link.'}));}
- if(path==='/update'){const signedIn=!!await browserSession(request,env);return html(shell('Update VidCapture',updatePage(),'/site.js',{signedIn,bodyClass:'page-update'}));}
+ if(path==='/'){const account=await browserSession(request,env),signedIn=!!account;return html(shell('Record, edit, and share from your top bar',homePage(signedIn,await demoSection(env)),'/site.js',{nav:'home',signedIn,updateRequired:!!account&&!!await legacyDevices(env,account.id),bodyClass:'page-home',description:'VidCapture is a free, open-source screen and camera recorder for Omarchy. Clean up your mic live, edit by deleting words from the transcript, and share one link.'}));}
+ if(path==='/update'){const account=await browserSession(request,env),required=!!account&&!!await legacyDevices(env,account.id);return html(shell('Update VidCapture',updatePage(required,!!account),'/site.js',{signedIn:!!account,bodyClass:'page-update'}));}
  if(path==='/login'||path==='/signup'){if(await browserSession(request,env))return new Response(null,{status:302,headers:{Location:'/library','Cache-Control':'no-store'}});return html(shell('Log in or sign up',loginPage(),'/site.js',{nav:'viewer',bodyClass:'page-login',turnstile:env.TURNSTILE_SITEKEY}));}
  const page=accountPages[path as keyof typeof accountPages];
  if(page){
   const account=await browserSession(request,env);
   if(page.signedIn&&!account)return new Response(null,{status:302,headers:{Location:'/login','Cache-Control':'no-store'}});
   if(page.admin&&!account?.is_admin)throw new HttpError(404,'Page not found.');
-  return html(shell(page.title,page.body,'/site.js',{nav:page.nav,signedIn:!!account,bodyClass:page.bodyClass,turnstile:TURNSTILE_PAGES.has(path)?env.TURNSTILE_SITEKEY:undefined}));
+  return html(shell(page.title,page.body,'/site.js',{nav:page.nav,signedIn:!!account,updateRequired:!!account&&page.nav!=='viewer'&&!!await legacyDevices(env,account.id),bodyClass:page.bodyClass,turnstile:TURNSTILE_PAGES.has(path)?env.TURNSTILE_SITEKEY:undefined}));
  }
- if(path==='/library'){if(!await browserSession(request,env))return new Response(null,{status:302,headers:{Location:'/login','Cache-Control':'no-store'}});}
+ let libraryUpdateRequired=false;
+ if(path==='/library'){const account=await browserSession(request,env);if(!account)return new Response(null,{status:302,headers:{Location:'/login','Cache-Control':'no-store'}});libraryUpdateRequired=!!await legacyDevices(env,account.id);}
  if(path==='/library'||path==='/connect'){
   const content=path==='/connect'?'<main class="welcome"><h1>Opening your library.</h1><p id="connect-status" role="status">Signing you in…</p></main>':'<main class="library"><div class="page-heading"><div><h1>My videos</h1></div><div class="actions"><label class="button" id="upload-label" hidden>Upload video <input id="upload" type="file" accept="video/mp4,.mp4" hidden></label></div></div><div id="verify-banner" class="notice" hidden><p>Confirm your email to start sharing. We sent a link to <strong id="verify-email"></strong>.</p><button class="quiet" id="verify-resend" type="button">Send it again</button></div><p id="storage-meter" class="subtle" hidden></p><div id="library-message" class="empty" role="status">Loading…</div><div id="library-tools" hidden><div class="library-filters"><input id="search" type="search" placeholder="Search your videos" aria-label="Search videos"><select id="visibility-filter" aria-label="Show"><option value="all">All videos</option><option value="public">Public</option><option value="private">Private</option></select></div><span id="video-count" class="subtle"></span></div><div id="upload-progress" hidden><span id="upload-status"></span><progress max="100" value="0"></progress><button id="cancel-upload" class="quiet">Cancel</button></div><div id="video-grid" class="video-grid"></div></main>';
-  return html(shell(path==='/library'?'My videos':'Signing in',content,'/site.js',{signedIn:path==='/library'}));
+  return html(shell(path==='/library'?'My videos':'Signing in',content,'/site.js',{signedIn:path==='/library',updateRequired:libraryUpdateRequired}));
  }
  if(['/style.css','/site.js','/app-updates.js','/extension-install.js','/player.js','/icon.svg','/share-card.js','/gifenc.js','/gifenc-LICENSE.md','/preview.js','/comments.js','/transcript.js'].includes(path))return env.ASSETS.fetch(request);
  if(/^\/shots\/[a-z-]+\.webp$/.test(path)){const r=await env.ASSETS.fetch(request);if(r.status!==200)throw new HttpError(404,'Page not found.');const out=new Response(r.body,r);out.headers.set('Cache-Control','public, max-age=86400');return out;}

@@ -4,7 +4,7 @@ A Loom-style recorder for Omarchy. Record your screen with a camera bubble, edit
 
 VidCapture records a window, area, or display with your microphone, system audio, and an optional circular camera. Cut and trim with a word-level transcript, remove filler words, and save a new MP4. Recording and editing work without an account and stay on your computer. Sharing is optional: use a free vidcapture.stream account, or deploy the sharing server in your own Cloudflare account.
 
-**Early source release, v0.1.0-alpha.10.** Tested on one Omarchy workstation with Hyprland 0.56.2, Electron 43, GPU Screen Recorder 6.1.4, FFmpeg 9, and an NVIDIA Quadro T2000 alongside Intel graphics. Broader hardware compatibility is not yet established.
+**Early source release, v0.1.0-alpha.11.** Tested on one Omarchy workstation with Hyprland 0.56.2, Electron 43, GPU Screen Recorder 6.1.4, FFmpeg 9, and an NVIDIA Quadro T2000 alongside Intel graphics. Broader hardware compatibility is not yet established.
 
 [Project website](https://vidcapture.stream) · [Releases](https://github.com/campeterson41/vidcapture/releases) · [Report a bug](https://github.com/campeterson41/vidcapture/issues)
 
@@ -33,7 +33,7 @@ Then clone, build the two helpers, and install:
 ```sh
 git clone https://github.com/campeterson41/vidcapture.git
 cd vidcapture
-git checkout v0.1.0-alpha.10
+git checkout v0.1.0-alpha.11
 ./engine/build.sh
 ./engine/build-camera.sh
 ./install.sh
@@ -130,3 +130,7 @@ Use Issues for reproducible bugs. Include your Omarchy and Hyprland versions, GP
 ## License and credits
 
 VidCapture's own code is MIT licensed. The separately built GPU Screen Recorder helper and its patch remain GPL-3.0-only; see [engine/README.md](engine/README.md). Models and libraries that the optional setup scripts download keep their own licenses and are not part of this repository; see [THIRD_PARTY.md](THIRD_PARTY.md). VidCapture is an independent project, unaffiliated with Omarchy or Loom.
+
+### One-time sharing upgrade
+
+Desktop releases before alpha.11 must upgrade once before uploading new videos. Alpha.11 confirms that the connected app supports updates; later releases remain optional unless a separate requirement is announced. Use Updates in alpha.8 and newer, or follow the [one-time guide](https://vidcapture.stream/update) for older copies. Restart the updated app to clear the website requirement. Each connected computer must upgrade or be disconnected from Account if no longer used. Local recordings and existing shared links remain available. Browser-only accounts do not need to install a desktop app.

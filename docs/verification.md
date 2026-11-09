@@ -1,5 +1,11 @@
 # Release verification
 
+## Alpha.11 one-time sharing requirement
+
+The publishing API requires updater protocol 1 for desktop upload operations. This fixed capability is independent of the latest release number. Each updated connected app acknowledges the migration; browser uploads remain blocked while that account has an active legacy desktop connection. Browser-only accounts, reading existing links, account management, pairing and local recording remain available. A client-supplied compatibility marker is not a security attestation against a modified client.
+
+Verification: 339 tests passed in the private checkout and independent review, including actual-Worker requests against in-memory SQLite migrations. Tests cover legacy upload and resume rejection before storage writes, authenticated confirmation, per-request checks after confirmation, exact uploaded bytes, account/device isolation, browser-only accounts, existing shared links, and a fixed baseline while the advertised release changes. Browser checks at 1440, 390, and 320 pixels exercised the required notice, Account labels, and Check again with a real previously published alpha.10 publisher and the new publisher, using synthetic data only. No physical recording or real app restart is claimed.
+
 ## Alpha.10 website update links
 
 Alpha.10 adds an owned Linux desktop URL entry for `vidcapture://updates`. A website link opens the existing update dialog on cold start or in the running app. Exact URL validation rejects duplicate URLs, query strings, fragments, and other actions while allowing Electron to reorder its startup arguments. Installation and restart still require confirmation and the existing recording/processing safeguards. The signed-in site displays a dismissible release announcement and provides manual steps for copies without a URL handler. No installed-version detection or successful-update claim is inferred from a browser click.

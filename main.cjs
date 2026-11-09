@@ -98,6 +98,7 @@ if(!locked){app.quit();}else{
     await recorder.init();
     syncCleanup({chain:recorder.audioChain,recorder,isBusy:()=>ACTIVE.has(recorder.state.phase)}).catch(()=>{});
     media=new MediaTools(recorder);transcripts=new Transcripts(recorder,media);media.onEnhanced=output=>transcripts.carry(output);publisher=new Publisher(recorder,media,{openExternal:url=>shell.openExternal(url),transcript:file=>transcripts.get(file)});await publisher.init();
+    if(recorder.state.publishingReady)void publisher.confirmUpdater().catch(()=>{});
     // New recordings are titled in the background and renamed once nothing has
     // them open. The editor's file counts as open until another file replaces it.
     // Any version of a recording open in the editor holds the whole set's rename.

@@ -1,4 +1,4 @@
-export class HttpError extends Error { constructor(public status:number,message:string){super(message);} }
+export class HttpError extends Error { status:number;constructor(status:number,message:string){super(message);this.status=status;} }
 export const json=(data:unknown,status=200,headers:Record<string,string>={})=>Response.json(data,{status,headers:{'Cache-Control':'no-store',...headers}});
 export const random=()=>Array.from(crypto.getRandomValues(new Uint8Array(32)),x=>x.toString(16).padStart(2,'0')).join('');
 export async function digest(value:string){return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value))),x=>x.toString(16).padStart(2,'0')).join('');}

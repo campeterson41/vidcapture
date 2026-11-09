@@ -255,3 +255,10 @@ test('an unreachable service says what to do instead of fetch failed',async()=>{
     assert.match(result.error.message,/Could not reach vidcapture\.stream/);
   }finally{await fs.rm(f.root,{recursive:true,force:true});}
 });
+
+test('desktop sharing identifies updater capability and confirms only its own device connection',async()=>{
+ const f=await fixture(1),calls=[];try{const p=new Publisher(f.rec,f.media,{fetch:async(url,options)=>{calls.push({url,options});return Response.json({ok:true});}});
+ await p.init();await p.confirmUpdater();assert.equal(calls[0].url,ORIGIN+'/api/admin/app-upgrade');assert.equal(calls[0].options.method,'POST');assert.equal(calls[0].options.headers['X-VidCapture-Updater'],'1');assert.equal(calls[0].options.headers.Authorization,'Bearer '+TOKEN);
+ await p.request('/api/admin/uploads',{method:'POST',headers:{'X-VidCapture-Updater':'0'},body:'{}'});assert.equal(calls[1].options.headers['X-VidCapture-Updater'],'1');
+ }finally{await fs.rm(f.root,{recursive:true,force:true});}
+});

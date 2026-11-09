@@ -1,3 +1,4 @@
+import {legacyDevices,updaterBaseline} from './app-upgrade';
 import {reportFiled} from './notify';
 import {HttpError,json,random,digest,now,escapeHtml,cookieToken,sameOrigin,readJson,formatBytes,optional} from './util';
 import {sendMail} from './mail';
@@ -161,9 +162,13 @@ export async function accountRoutes(request:Request,env:Env,url:URL,deps:Deps):P
    env.DB.prepare('UPDATE devices SET revoked=1 WHERE account_id=? AND website=0').bind(account.id)]);
   return json({ok:true},200,{'Set-Cookie':await startSession(env,account.id)});
  }
+ if(path==='/api/app-upgrade'&&method==='GET'){
+  const account=await requireAccount(request,env),remaining=await legacyDevices(env,account.id);
+  return json({required:remaining>0,remaining,minimumVersion:updaterBaseline});
+ }
  if(path==='/api/me'&&method==='GET'){
   const account=await requireAccount(request,env);
-  const devices=(await env.DB.prepare("SELECT rowid AS id,name,created_at AS createdAt FROM devices WHERE account_id=? AND revoked=0 AND website=0 ORDER BY created_at").bind(account.id).all()).results;
+  const devices=(await env.DB.prepare("SELECT rowid AS id,name,created_at AS createdAt,updater_ready AS updaterReady FROM devices WHERE account_id=? AND revoked=0 AND website=0 ORDER BY created_at").bind(account.id).all()).results;
   return json({email:account.email,verified:!!account.verified_at,usedBytes:await usedBytes(env,account.id),quotaBytes:account.quota_bytes,isAdmin:!!account.is_admin,hasPassword:!!account.password_hash,notifyComments:account.notify_comments!==0,devices});
  }
  if(path==='/api/account/notifications'&&method==='POST'){
