@@ -244,11 +244,11 @@ test('the default timings bound an ensure to ten seconds',()=>{
 test('quitting stops the microphone watch before the chain',()=>{
   const main=fs.readFileSync(path.join(__dirname,'..','main.cjs'),'utf8');
   const close=main.slice(main.indexOf('async function requestClose'),main.indexOf("app.on('before-quit'"));
-  const watch=close.indexOf('micWatch?.stop()'),chainStop=close.indexOf('audioChain?.stop()'),firstWait=close.indexOf('await ');
+  const watch=close.indexOf('micWatch?.stop()'),chainStop=close.indexOf('audioChain?.stop()'),firstWait=close.indexOf('await ',close.indexOf('closing=true;'));
   assert.ok(watch>0&&chainStop>watch,'watch stops first');
   assert.ok(watch<firstWait,'and before anything quitting waits on, such as the editor flush or a dialog');
   assert.match(close,/await watchDone/,'and is drained before quitting');
-  assert.match(close,/finally\{[^}]*if\(!allowQuit\)micWatch\?\.start\(\)/,'an abandoned close resumes the watch');
+  assert.match(close,/finally\{[^}]*if\(!allowQuit\)\{[^}]*micWatch\?\.start\(\)/,'an abandoned close resumes the watch');
   assert.match(main,/async function syncMicChain\(\)\{[^}]*if\(closing\|\|/,'a late Try again or settings save starts no chain while quitting');
 });
 

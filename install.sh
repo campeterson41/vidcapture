@@ -22,6 +22,7 @@ fi
 mkdir -p "$capture_home/.local/bin" "$capture_home/.local/share/applications"
 {
   printf '#!/usr/bin/env bash\n# Capture local recorder launcher\n'
+  printf '# Capture source: %s\n' "$(node -e 'process.stdout.write(Buffer.from(process.argv[1]).toString("base64"))' "$capture_source")"
   printf 'exec /usr/bin/node %q "$@"\n' "$capture_source/launch.cjs"
 } > "$capture_launcher"
 chmod 755 "$capture_launcher"

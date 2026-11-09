@@ -2,6 +2,14 @@
 
 (() => {
   const bridge = window.capture;
+  const updateButton = document.getElementById('app-updates');
+  updateButton.addEventListener('click', () => bridge?.checkUpdates?.());
+  bridge?.onState?.(s => {
+    const u = s.appUpdate;
+    if (!u) return;
+    updateButton.textContent = ['downloading','building'].includes(u.status) ? 'Updating…' : u.available ? 'Update available' : 'Updates';
+    updateButton.title = u.available ? `VidCapture ${u.available} is available` : `VidCapture ${u.current}: check for updates`;
+  });
   const ACTIVE = new Set(['selecting', 'starting', 'recording', 'paused', 'stopping']);
   const HOME_RE = /^\/home\/[^/]+(?=\/|$)/;
 

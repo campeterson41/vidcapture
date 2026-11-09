@@ -20,12 +20,13 @@ const {CameraEffects}=require('./camera-effects.cjs');
 const {CameraProfiles}=require('./camera-profiles.cjs');
 const {startExtensionBridge}=require('./extension-bridge.cjs');
 const {shortcutsFrom}=require('./hotkeys.cjs');
+const {Updates}=require('./updates.cjs');
 protocol.registerSchemesAsPrivileged([{scheme:'capture-media',privileges:{standard:true,secure:true,stream:true,supportFetchAPI:true}}]);
 app.setName('Capture');
 app.setPath('userData',path.join(app.getPath('appData'),'capture'));
 const locked=app.requestSingleInstanceLock();
 if(!locked){app.quit();}else{
-  let win,tray,recorder,media,transcripts,publisher,surfaces,titles,editorFile=null,allowQuit=false,closing=false,inhibit=null,extensionBridge=null,micWatch=null;
+  let win,tray,recorder,media,transcripts,publisher,surfaces,titles,editorFile=null,allowQuit=false,closing=false,inhibit=null,extensionBridge=null,micWatch=null,updates=null,updateDialog=false,restartUpdate=false;
   const show=()=>{if(win){win.show();if(win.isMinimized())win.restore();win.focus();}};
   // `capture --panel [--screen=NAME] [--x=N]` opens the record drop-down; the
   // top bar icon passes its screen and position. `--pick` is the older name.
@@ -49,7 +50,10 @@ if(!locked){app.quit();}else{
   });
   async function requestClose(){
     if(closing)return;
+    if(updates?.installing){await dialog.showMessageBox(win,{message:'VidCapture is preparing an update.',detail:'Wait for it to finish before quitting.'});return;}
+    if(restartUpdate&&(surfaces.busy()||surfaces.picker||surfaces.counting||transcripts.job)){restartUpdate=false;throw new Error('Finish recording and processing before restarting.');}
     closing=true;
+    if(restartUpdate)surfaces.updating=true;
     // No microphone recovery may start a chain once quitting begins, even if a step below
     // waits (the editor flush, a dialog). The watch restarts only if the close is abandoned.
     const watchDone=micWatch?.stop();
@@ -65,6 +69,7 @@ if(!locked){app.quit();}else{
         if(response!==1)return;
         await recorder.stop();
       }
+      const next=restartUpdate?await updates.activate():null;
       await extensionBridge?.close();
       // The microphone indicator's level readers are stopped and waited for (bounded). One
       // whose exit was not confirmed is reported, not assumed gone; quitting goes on.
@@ -72,8 +77,10 @@ if(!locked){app.quit();}else{
       if(meterEnd?.unconfirmed?.length)console.error(`VidCapture: microphone level reader did not confirm its exit (pid ${meterEnd.unconfirmed.join(', ')}).`);
       // Stop the chain (which also cancels a recovery in progress) and wait for the watch to drain.
       await recorder.audioChain?.stop().catch(()=>{});await watchDone;
-      await titles?.flush().catch(()=>{});media?.dispose();transcripts?.dispose();await recorder.dispose();allowQuit=true;app.quit();
-    }catch(e){show();await dialog.showMessageBox(win,{type:'error',message:e.message});}finally{closing=false;if(!allowQuit)micWatch?.start();}
+      await titles?.flush().catch(()=>{});media?.dispose();transcripts?.dispose();await recorder.dispose();
+      if(next)app.relaunch({execPath:'/usr/bin/node',args:[path.join(next,'launch.cjs')]});
+      allowQuit=true;app.quit();
+    }catch(e){show();await dialog.showMessageBox(win,{type:'error',message:e.message});}finally{closing=false;if(!allowQuit){restartUpdate=false;if(surfaces)surfaces.updating=false;micWatch?.start();}}
   }
   app.on('before-quit',e=>{if(!allowQuit){e.preventDefault();requestClose();}});
   app.whenReady().then(async()=>{
@@ -127,6 +134,7 @@ if(!locked){app.quit();}else{
     for(const name of ['hide','show','minimize','restore'])win.on(name,()=>surfaces.syncLevel());
     win.on('close',event=>{if(!allowQuit){event.preventDefault();requestClose();}});
     const actions={
+      checkUpdates:()=>showUpdates(),
       getState:()=>recorder.snapshot(),listWindows:()=>recorder.listWindows(),refreshDevices:async()=>{await recorder.cameraProfiles.load();return recorder.refreshDevices();},saveSettings:async s=>{const out=await recorder.saveSettings(s);await syncMicChain();return out;},
       chooseTarget:id=>recorder.chooseTarget(id),
       // Studio settings: every camera control, the mic's own level, and live mic cleanup.
@@ -192,6 +200,7 @@ if(!locked){app.quit();}else{
     micWatch.start();
     for(const [name,handler] of Object.entries(actions))ipcMain.handle(`capture:${name}`,async(event,...args)=>{
       if(event.sender!==win.webContents || event.senderFrame!==win.webContents.mainFrame)throw new Error('Untrusted app frame.');
+      if((surfaces.updating||closing)&&!['getState','minimize','close','checkUpdates','saveEdits'].includes(name))throw new Error('Wait for the app update to finish.');
       return handler(...args);
     });
 
@@ -204,6 +213,7 @@ if(!locked){app.quit();}else{
       showRecording:async name=>{if(typeof name!=='string'||path.basename(name)!==name)throw new Error('Choose a file from your recordings folder.');shell.showItemInFolder(await recorder.allowedFile(path.join(recorder.outputDir,name)));}};
     for(const [name,handler] of Object.entries(libraryActions))ipcMain.handle(`capture:${name}`,async(event,...args)=>{
       if(event.sender!==win.webContents || event.senderFrame!==win.webContents.mainFrame)throw new Error('Untrusted app frame.');
+      if((surfaces.updating||closing)&&!['getState','minimize','close','checkUpdates','saveEdits'].includes(name))throw new Error('Wait for the app update to finish.');
       return handler(...args);
     });
     // Small state file for the top bar icon: phase changes only, plus the
@@ -233,9 +243,40 @@ if(!locked){app.quit();}else{
           {label:'New recording',enabled:!active&&!state.job?.running,click:()=>openPanel()},
           {label:state.phase==='paused'?'Resume recording':'Pause recording',enabled:['recording','paused'].includes(state.phase),click:()=>recorder.pause().catch(e=>recorder.set({error:e.message}))},
           {label:'Stop and save',enabled:['recording','paused'].includes(state.phase),click:()=>{recorder.stop().catch(e=>recorder.set({error:e.message})).finally(show);}},
-          {type:'separator'},{label:'Quit VidCapture',click:requestClose}
+          {type:'separator'},{label:updates?.state.available?'Update available':'Check for updates',click:()=>showUpdates()},
+          {label:'Quit VidCapture',click:requestClose}
         ]));
       }
+    }
+    async function showUpdates(){
+      if(updateDialog||closing)return;
+      updateDialog=true;
+      show();
+      try{
+        if(updates.installing){await dialog.showMessageBox(win,{message:'Preparing your update',detail:'VidCapture is downloading and building the new version. This can take several minutes.'});return;}
+        if(!updates.ready)await updates.check({force:true});
+        const u=updates.state;
+        if(u.status==='error')throw new Error(u.error);
+        if(!u.available){await dialog.showMessageBox(win,{message:'VidCapture is up to date',detail:`Installed version: ${u.current}`});return;}
+        if(surfaces.busy()||surfaces.picker||surfaces.counting||transcripts.job){await dialog.showMessageBox(win,{message:`VidCapture ${u.available} is available`,detail:'Finish recording and processing, then open Updates to install it.'});return;}
+        if(!updates.ready){
+          const {response}=await dialog.showMessageBox(win,{type:'question',message:`Update to VidCapture ${u.available}?`,detail:'The update will download and build on this computer. Recording controls will be unavailable while it prepares. Your recordings and settings stay in place.',buttons:['Later','Install update'],defaultId:0,cancelId:0});
+          if(response!==1)return;
+          // A recording or extension command can begin while the dialog is open.
+          if(surfaces.busy()||surfaces.picker||surfaces.counting||transcripts.job)throw new Error('Finish recording and processing before installing.');
+          surfaces.updating=true;
+          try{await updates.prepare();}finally{surfaces.updating=false;}
+        }
+        const {response}=await dialog.showMessageBox(win,{message:'Your update is ready',detail:'Restart VidCapture to use the new version. The previous app copy is kept for recovery.',buttons:['Later','Restart now'],defaultId:1,cancelId:0});
+        if(response===1){restartUpdate=true;await requestClose();}
+      }catch(e){await dialog.showMessageBox(win,{type:'error',message:'VidCapture update',detail:e.message});}
+      finally{updateDialog=false;}
+    }
+    updates=new Updates({changed:state=>recorder.set({appUpdate:state})});
+    recorder.set({appUpdate:{...updates.state}});
+    if(!process.env.CAPTURE_TEST_DATA_DIR){
+      const first=setTimeout(()=>updates.check(),15000);first.unref();
+      const timer=setInterval(()=>updates.check(),6*60*60*1000);timer.unref();
     }
     const icon=nativeImage.createFromPath(path.join(__dirname,'ui/icon.png'));
     tray=new Tray(icon.resize({width:24,height:24}));tray.on('click',()=>openPanel());

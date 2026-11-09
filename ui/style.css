@@ -1382,3 +1382,7 @@ body[data-view="library"] #share-video { display: none; }
 .background-remove .icon { width: 12px; height: 12px; }
 .background-item:hover .background-remove, .background-remove:focus-visible { opacity: 1; }
 @media (max-width: 420px) { .backgrounds { padding-left: 0; } }
+
+/* Keep the update control reachable in the compact desktop window. */
+#app-updates { -webkit-app-region: no-drag; font-size: 12px; white-space: nowrap; padding: 6px; }
+@media (max-width: 520px) { .wordmark { font-size: 0; gap: 0; } #app-updates { max-width: 84px; white-space: normal; line-height: 1.15; } }

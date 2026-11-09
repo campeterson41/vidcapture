@@ -4,7 +4,7 @@ A Loom-style recorder for Omarchy. Record your screen with a camera bubble, edit
 
 VidCapture records a window, area, or display with your microphone, system audio, and an optional circular camera. Cut and trim with a word-level transcript, remove filler words, and save a new MP4. Recording and editing work without an account and stay on your computer. Sharing is optional: use a free vidcapture.stream account, or deploy the sharing server in your own Cloudflare account.
 
-**Early source release, v0.1.0-alpha.7.** Tested on one Omarchy workstation with Hyprland 0.56.2, Electron 43, GPU Screen Recorder 6.1.4, FFmpeg 9, and an NVIDIA Quadro T2000 alongside Intel graphics. Broader hardware compatibility is not yet established.
+**Early source release, v0.1.0-alpha.8.** Tested on one Omarchy workstation with Hyprland 0.56.2, Electron 43, GPU Screen Recorder 6.1.4, FFmpeg 9, and an NVIDIA Quadro T2000 alongside Intel graphics. Broader hardware compatibility is not yet established.
 
 [Project website](https://vidcapture.stream) · [Releases](https://github.com/campeterson41/vidcapture/releases) · [Report a bug](https://github.com/campeterson41/vidcapture/issues)
 
@@ -33,7 +33,7 @@ Then clone, build the two helpers, and install:
 ```sh
 git clone https://github.com/campeterson41/vidcapture.git
 cd vidcapture
-git checkout v0.1.0-alpha.7
+git checkout v0.1.0-alpha.8
 ./engine/build.sh
 ./engine/build-camera.sh
 ./install.sh
@@ -42,6 +42,18 @@ git checkout v0.1.0-alpha.7
 Open **VidCapture** from your application launcher, or run `capture`. Keep the source folder in place: the launcher points to it. The build downloads pinned GPU Screen Recorder source, Vulkan headers, Meson, and Ninja, and installs private helpers inside this checkout. The system recorder is unchanged.
 
 If a prerequisite is missing, installation stops and names it. GPU capture still depends on your GPU, drivers, permissions, and a working system GPU Screen Recorder. The installer does not change system capabilities, drivers, or your Hyprland bindings.
+
+### App updates
+
+Starting with alpha.8, VidCapture checks GitHub for a newer release when it opens and every six hours while running. **Updates** in the title bar and **Check for updates** in the tray menu also check on demand. An available update changes the button to **Update available**. Checks send no recordings, account credentials, or settings.
+
+Choose **Install update** when you have finished recording and processing. VidCapture verifies the release archive against GitHub's SHA-256 asset digest, extracts it into a separate folder, and builds the two native helpers. Recording controls are unavailable while it prepares. Choose **Restart now** when ready, or **Later** to keep using the current app. Installation needs the same build prerequisites as the initial install and a working internet connection. A failed download or build leaves the installed app in place.
+
+Updates keep recordings, settings, sharing connections, optional models, and the previous source folder. Updated app copies live in `~/.local/share/vidcapture/updates/`. To restore an earlier copy, quit VidCapture and run `./install.sh` from that preserved source folder. Do not delete the original folder while a desktop icon or unpacked browser extension still points into it.
+
+Alpha installations receive later prereleases and stable releases. Stable installations receive stable releases only. The Chrome extension is currently loaded unpacked and must be updated separately using [its install guide](extension/INSTALL.md). Development checkouts use their own source workflow.
+
+**Already using alpha.7 or earlier?** Those versions have no updater. Quit the app, keep your old folder, and follow the install steps above in a new folder once. The new copy uses your existing recordings and settings, and later updates appear in the app.
 
 ### Optional features
 

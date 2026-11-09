@@ -98,7 +98,7 @@ class Surfaces{
   }
 
   // startPending covers the moments before the recorder reports 'starting'.
-  busy(){return !!(this.startPending||this.extensionMutation||BUSY.has(this.recorder.state.phase)||this.recorder.state.job?.running);}
+  busy(){return !!(this.updating||this.startPending||this.extensionMutation||BUSY.has(this.recorder.state.phase)||this.recorder.state.job?.running);}
 
   /* Launcher bar */
 

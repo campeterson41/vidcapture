@@ -1,5 +1,20 @@
 # v0.1.0-alpha.7 verification
 
+## Alpha.8 app updates
+
+Alpha.8 adds automatic GitHub release checks, an Updates control, verified source downloads, separate native-helper builds, and an explicit restart to activate the new app. Existing alpha.7 and earlier installations need one manual upgrade.
+
+Verification for the updater:
+
+- Release selection tests cover numeric prereleases, stable channels, no downgrades, draft and incomplete releases, foreign URLs, rate limits, and size limits.
+- Isolated installation tests verify SHA-256 checks, safe extraction, build failures, launcher changes, old-source preservation, settings preservation, and development-checkout protection.
+- Main-process lifecycle tests run the real app wiring with isolated adapters. They cover active takes, countdowns, processing, extension mutations, installation and restart confirmation races, controls during preparation, edit flushing, and relaunch arguments. They do not operate hardware.
+- A live public alpha.7 archive was downloaded through the updater, verified against its GitHub digest, and both native helpers were built with the real toolchain. Activation changed only an isolated test home's launcher. The workstation's installed app was not restarted.
+- Headless Chromium checks cover the update button at 820 and 390 pixels, including available, preparing, and ready states, keyboard activation, and overflow. Screenshots were visually inspected.
+
+Limits: no automatic upgrade can reach a copy that predates the updater. The unpacked Chrome extension still needs a separate update. No new physical recording or broad hardware compatibility test was performed for this change. The updater trusts the project's GitHub release and its HTTPS-served asset digest; it does not use a separate offline signing key.
+
+
 Alpha.7 adds a compact Chrome extension panel for the desktop recorder's settings, a microphone level indicator on the floating recording controls, and safer handling when the selected microphone disappears. It also changes camera-preview shutdown for the transport path without background effects and places the recording controls before they appear. The extension is packaged as a versioned ZIP, with an installation guide. [Extension settings](../extension/SETTINGS.md) lists the controls and their limits.
 
 These changes were reviewed by reviewers separate from their authors on November 7 and 8, 2026, on the same single Omarchy workstation:
