@@ -444,3 +444,8 @@ input.pair-code{margin:4px 0 0;font-size:26px;text-transform:uppercase;max-width
 .device-update-status { display: block; font-size: 13px; font-weight: 400; color: var(--muted); }
 .device-list li>span:first-child { min-width: 0; overflow-wrap: anywhere; }
 .app-update-notice [data-upgrade-status] a { text-decoration: underline; }
+@media (max-width: 600px) {
+ .device-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 16px; }
+ .device-list li>span:first-child { grid-column: 1 / -1; }
+ .device-list li button { margin-left: 0; }
+}
